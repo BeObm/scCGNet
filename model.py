@@ -24,8 +24,8 @@ class GraphConvSparse(nn.Module):
         
     def forward(self, inputs, adj):
         x = inputs
-        x = torch.mm(x, self.weight)
-        x = torch.mm(adj, x)
+        x = torch.spmm(x, self.weight)
+        x = torch.spmm(adj, x)
         outputs = self.activation(x)
         return outputs
     
@@ -163,14 +163,14 @@ class GMCM_VGAE(nn.Module):
         elif optimizer == "RMSProp":
             opti = RMSprop(self.parameters(), lr=lr, weight_decay = 0.01)
         lr_s = StepLR(opti, step_size=10, gamma=0.9)
-        
+
         import csv, os
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
         # Logging the resluts
         logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
-        logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi'])
+        logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi',"Loss_total"])
         logwriter.writeheader()
         
         epoch_bar=tqdm(range(epochs))
@@ -180,25 +180,27 @@ class GMCM_VGAE(nn.Module):
         count =0
         currmax = 0
         finalist = []
+
         for epoch in epoch_bar:           
             opti.zero_grad()
             # Encoding
-            z_mu, z_sigma2_log, emb = self.encode(features, adj_norm) 
-            
-            # Decoding
-            x_ = self.decode(emb)                        
+            z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)
 
+            # Decoding
+            x_ = self.decode(emb)
             # Use GMCM to model the clusters
             _, dim = emb.detach().numpy().shape
 
-            gmcm = GaussianMixtureCopula(n_clusters=self.nClusters, ndim=dim)  
-            gmcm_fit = gmcm.fit(emb.detach().cpu().numpy(), method='kmeans', criteria='GMCM', eps=0.0001) 
+            gmcm = GaussianMixtureCopula(n_clusters=self.nClusters, ndim=dim)
+            gmcm_fit = gmcm.fit(emb.detach().cpu().numpy().astype("float64",copy=True), method='kmeans', criteria='GMCM', eps=0.0001)
             pies = torch.from_numpy(gmcm_fit.params.prob)
             mus = torch.from_numpy(gmcm_fit.params.means)
+
+
             log_sigma2s = torch.from_numpy(np.log(gmcm_fit.params.covs))
             emb = torch.from_numpy(emb.detach().numpy())
             n_clusters= gmcm_fit.clusters
-      
+
             self.pi.data = pies         
             self.mu_c.data = mus                
             self.log_sigma2_c.data =  log_sigma2s
