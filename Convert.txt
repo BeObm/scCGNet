@@ -1,0 +1,42 @@
+import pandas as pd
+from scipy.sparse import coo_matrix
+df = pd.read_csv (r'SameSize/Z_same_10.csv')
+df2 = pd.read_csv (r'SameSize/Z_same_label.csv')
+import numpy as np
+import scipy
+import pickle as pkl
+
+dfv = df
+dfv = dfv.iloc[: ,1:]
+
+dff = scipy.sparse.csr_matrix(dfv.values)
+dff = dff.transpose()
+pkl.dump(dff, open("SameSize/ind.Zsame10.allx", "wb"))
+
+unique1 = list(set(df2['assigned_cluster']))
+
+dict1 = {}
+for i in range(len(unique1)):
+    dict1[unique1[i]] = i
+res = []
+unique = 0
+for index, row in df2.iterrows():
+    temp = [0]*4
+    temp[dict1[row['assigned_cluster']]]=1
+    res.append(temp)
+res = np.array(res)
+
+pkl.dump(res, open("SameSize/ind.Zsame10.ally", "wb"))
+
+file1 = open('SameSize/Z_same_graph_10.txt', 'r')
+Lines = file1.read().splitlines()
+
+res = {}
+for i in range(dfv.shape[1]):
+    res[i]=[]
+for i in Lines:
+    s = i.split(' ')
+    res[int(s[0])].append(int(s[1]))
+
+import pickle as pkl
+pkl.dump(res, open("SameSize/ind.Zsame10.graph", "wb"))
