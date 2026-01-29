@@ -4,7 +4,8 @@ import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
 
-# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available 
+
+# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
 def parse_index_file(filename):
     """Parse the index file path
@@ -20,8 +21,9 @@ def parse_index_file(filename):
         index.append(int(line.strip()))
     return index
 
+
 def load_data(dataset, data_path, modified):
-    """Load the data 
+    """Load the data
 
     Args:
         dataset: Dataset name
@@ -35,15 +37,14 @@ def load_data(dataset, data_path, modified):
     names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
     objects = []
     for i in range(len(names)):
-        with open(data_path+"/ind.{}.{}".format(dataset, names[i]), 'rb') as rf:
+        with open(data_path + "/ind.{}.{}".format(dataset, names[i]), 'rb') as rf:
             u = pkl._Unpickler(rf)
             u.encoding = 'latin1'
             cur_data = u.load()
             objects.append(cur_data)
     x, y, tx, ty, allx, ally, graph = tuple(objects)
-    test_idx_reorder = parse_index_file(data_path+"/ind.{}.test.index".format(dataset))
+    test_idx_reorder = parse_index_file(data_path + "/ind.{}.test.index".format(dataset))
     test_idx_range = np.sort(test_idx_reorder)
-
 
     if modified:
         features = allx
@@ -57,7 +58,15 @@ def load_data(dataset, data_path, modified):
 
     adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
 
-    return adj, features, np.argmax(labels,1)
+    # Convert labels - handle both one-hot and integer formats
+    if len(labels.shape) > 1 and labels.shape[1] > 1:
+        # One-hot encoded
+        labels_int = np.argmax(labels, 1)
+    else:
+        # Already integer
+        labels_int = labels.flatten()
+
+    return adj, features, labels_int
 
 
 def sparse_to_tuple(sparse_mx):
@@ -75,6 +84,7 @@ def sparse_to_tuple(sparse_mx):
     values = sparse_mx.data
     shape = sparse_mx.shape
     return coords, values, shape
+
 
 def preprocess_graph(adj):
     """Preprocess the graphs
@@ -94,11 +104,19 @@ def preprocess_graph(adj):
 
 
 def get_device():
+    """Get the best available device (CUDA > MPS > CPU)
 
+    Returns:
+        torch.device: The device to use for computation
+    """
     if torch.cuda.is_available():
         device = torch.device("cuda")
+        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
+        print("Using Apple MPS (Metal Performance Shaders)")
     else:
         device = torch.device("cpu")
+        print("Using CPU")
+
     return torch.device("cpu")

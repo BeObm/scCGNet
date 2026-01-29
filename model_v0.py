@@ -76,55 +76,23 @@ class GraphStructureVGAE(nn.Module):
         self.gamma_structure = kwargs.get('gamma_structure', 20.0)  # Very high
 
     def graph_laplacian_loss(self, embeddings, adj):
-        """Enforce graph smoothness - connected nodes should have similar embeddings
+        """Enforce graph smoothness - connected nodes should have similar embeddings"""
+        # Compute pairwise distances
+        diff = embeddings.unsqueeze(0) - embeddings.unsqueeze(1)
+        distances = torch.sum(diff ** 2, dim=2)
 
-        Optimized version: samples edges for computational efficiency
-        """
-        # Get sparse adjacency edges
-        adj_coo = adj.coalesce()
-        edge_indices = adj_coo.indices()
-        edge_values = adj_coo.values()
+        # Weight by adjacency
+        adj_dense = adj.to_dense()
+        weighted_distances = distances * adj_dense
 
-        # Sample edges for efficiency (max 3000 edges per iteration)
-        num_edges = edge_indices.shape[1]
-        if num_edges > 3000:
-            sample_idx = torch.randperm(num_edges, device=edge_indices.device)[:3000]
-            edge_indices = edge_indices[:, sample_idx]
-            edge_values = edge_values[sample_idx]
-
-        # Get embeddings of connected nodes
-        source_emb = embeddings[edge_indices[0]]
-        target_emb = embeddings[edge_indices[1]]
-
-        # Compute distances for sampled edges
-        edge_distances = torch.sum((source_emb - target_emb) ** 2, dim=1)
-
-        # Weight by edge values
-        weighted_distances = edge_distances * edge_values
-
-        laplacian_loss = torch.mean(weighted_distances)
+        laplacian_loss = torch.sum(weighted_distances) / (torch.sum(adj_dense) + 1e-10)
 
         return laplacian_loss
 
     def structure_preservation_loss(self, embeddings, original_distances):
-        """Preserve original graph distances in embedding space
-
-        Optimized: samples node pairs instead of full NxN matrix
-        """
-        num_nodes = embeddings.shape[0]
-
-        # Sample node pairs for efficiency (1000 pairs per iteration)
-        n_samples = min(1000, num_nodes // 2)
-        idx1 = torch.randint(0, num_nodes, (n_samples,), device=embeddings.device)
-        idx2 = torch.randint(0, num_nodes, (n_samples,), device=embeddings.device)
-
-        # Compute distances for sampled pairs
-        emb_dist_sampled = torch.norm(embeddings[idx1] - embeddings[idx2], p=2, dim=1)
-        orig_dist_sampled = original_distances[idx1, idx2]
-
-        # Minimize distance difference
-        structure_loss = F.mse_loss(emb_dist_sampled, orig_dist_sampled)
-
+        """Preserve original graph distances in embedding space"""
+        emb_distances = torch.cdist(embeddings, embeddings, p=2)
+        structure_loss = F.mse_loss(emb_distances, original_distances)
         return structure_loss
 
     def clustering_loss(self, embeddings):
@@ -181,15 +149,8 @@ class GraphStructureVGAE(nn.Module):
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        # Use AdamW with optimized parameters for faster convergence
-        opti = torch.optim.AdamW(
-            self.parameters(),
-            lr=lr,
-            weight_decay=0.00001,  # Reduced from 0.0001 for more parameter freedom
-            betas=(0.9, 0.999)  # Standard momentum values
-        )
-        # Faster annealing with higher minimum LR
-        scheduler = CosineAnnealingLR(opti, T_max=epochs, eta_min=lr / 50)
+        opti = Adam(self.parameters(), lr=lr, weight_decay=0.0001)
+        scheduler = CosineAnnealingLR(opti, T_max=epochs, eta_min=lr / 100)
 
         import csv, os
         if not os.path.exists(save_path):
@@ -209,7 +170,7 @@ class GraphStructureVGAE(nn.Module):
 
         currmax = 0
         finalist = []
-        patience = 100  # Reduced from 200 - faster early stopping with stable improvement
+        patience = 200
         patience_counter = 0
         best_model_state = None
 
@@ -275,17 +236,11 @@ class GraphStructureVGAE(nn.Module):
                 acc, nmi, adjscore = cm.evaluationClusterModelFromLabel()
                 acc_list.append(acc)
 
-                # Logging with more frequent updates for faster training
-                if epoch % 5 == 0:  # Every 5 epochs instead of 10
+                # Logging
+                if epoch % 10 == 0:
                     n_pred = len(np.unique(y_pred))
                     epoch_bar.write(
                         f'Epoch {epoch}: Loss={loss_total.item():.2f}, ARI={adjscore:.4f}, NMI={nmi:.4f}, Clusters={n_pred}')
-
-                    # Show improvement rate
-                    if epoch > 0 and len(acc_list) > 5:
-                        recent_ari_change = adjscore - acc_list[-5]
-                        if recent_ari_change > 0:
-                            epoch_bar.write(f'  └─ ARI +{recent_ari_change:.4f} in last 5 epochs ✓')
 
                 logdict = dict(
                     iter=epoch,
