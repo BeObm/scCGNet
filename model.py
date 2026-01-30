@@ -10,8 +10,9 @@ from sklearn.metrics.cluster import adjusted_rand_score
 from sklearn.manifold import SpectralEmbedding
 from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
+from preprocessing import *
 
-
+device=get_device()
 class GraphConvSparse(nn.Module):
     def __init__(self, seed, input_dim, output_dim, adj, activation=torch.sigmoid, **kwargs):
         super(GraphConvSparse, self).__init__(**kwargs)
@@ -136,10 +137,20 @@ class GMCM_VGAE_Final(nn.Module):
         return torch.mean(weighted_distances)
 
     def Calculate_Loss(self, features, adj, x_, adj_label, y, weight_tensor, norm, z_mu, z_sigma2_log, emb):
+
+        features = features.to(device)
+        adj = adj.to(device)
+        x_ = x_.to(device)
+        adj_label = adj_label.to(device)
+        weight_tensor = weight_tensor.to(device)
+        z_mu = z_mu.to(device)
+        z_sigma2_log = z_sigma2_log.to(device)
+        emb = emb.to(device)
+
         nClusters = self.nClusters
-        pi = self.pi
-        mu_c = self.mu_c
-        log_sigma2_c = self.log_sigma2_c
+        pi = self.pi.to(device)
+        mu_c = self.mu_c.to(device)
+        log_sigma2_c = self.log_sigma2_c.to(device)
 
         # Reconstruction loss
         det = 1e-2
@@ -152,7 +163,7 @@ class GMCM_VGAE_Final(nn.Module):
         yita_c = yita_c / (yita_c.sum(1).view(-1, 1) + 1e-10)
 
         # Optional: Class imbalance weighting
-        use_class_weights = True
+        use_class_weights = False
         if use_class_weights:
             cluster_counts = torch.bincount(torch.from_numpy(y).long(), minlength=nClusters)
             cluster_weights = 1.0 / (cluster_counts.float() + 1.0)
@@ -160,7 +171,7 @@ class GMCM_VGAE_Final(nn.Module):
             weighted_yita = yita_c * cluster_weights.unsqueeze(0)
             weighted_yita = weighted_yita / (weighted_yita.sum(1, keepdim=True) + 1e-10)
         else:
-            weighted_yita = yita_c
+            weighted_yita = yita_c.to(device)
 
         # KL divergence
         KL1 = 0.5 * torch.mean(torch.sum(weighted_yita * torch.sum(
@@ -391,6 +402,11 @@ class GMCM_VGAE_Final(nn.Module):
 
     def gmcm_gaussian_pdfs_log(self, x, nClusters, mus, log_sigma2s, pies):
         G = []
+
+        mus = mus.to(device)
+        log_sigma2s = log_sigma2s.to(device)
+        pies = pies.to(device)
+
         for c in range(nClusters):
             G.append(self.gmcm_gaussian_pdf_log(x, mus[c, :], log_sigma2s[c, :], pies[c]).view(-1, 1))
         return torch.cat(G, 1)
@@ -400,6 +416,9 @@ class GMCM_VGAE_Final(nn.Module):
         return c
 
     def predict_gmcm(self, x, nClusters, mu_c, log_sigma2_c, pi_c):
+        mu_c = mu_c.to(device)
+        log_sigma2_c = log_sigma2_c.to(device)
+        pi_c = pi_c.to(device)
         log_probs = torch.log(pi_c.unsqueeze(0) + 1e-10) + self.gmcm_gaussian_pdfs_log(x, nClusters, mu_c, log_sigma2_c,
                                                                                        pi_c)
         kappa_c = torch.softmax(log_probs, dim=1)
@@ -414,7 +433,7 @@ class GMCM_VGAE_Final(nn.Module):
 
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-        gaussian_noise = torch.randn(x_features.size(0), self.embedding_size)
+        gaussian_noise = torch.randn(x_features.size(0), self.embedding_size).to(device)
         sampled_z = gaussian_noise * torch.exp(self.logstd) + self.mean
         sampled_z = torch.clamp(sampled_z, min=-10, max=10)
 
