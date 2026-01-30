@@ -11,11 +11,10 @@ os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
 import warnings
 warnings.filterwarnings('ignore')
-
 import numpy as np
 import torch
 import scipy.sparse as sp
-from model import GraphStructureVGAE
+from model import GMCM_VGAE_Final
 from preprocessing import load_data, sparse_to_tuple, preprocess_graph, get_device
 import time
 
