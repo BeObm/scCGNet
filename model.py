@@ -276,7 +276,7 @@ class GraphStructureVGAE(nn.Module):
                 acc_list.append(acc)
 
                 # Logging with more frequent updates for faster training
-                if epoch % 5 == 0:  # Every 5 epochs instead of 10
+                if epoch % 50 == 0:  # Every 50 epochs instead of 10
                     n_pred = len(np.unique(y_pred))
                     epoch_bar.write(
                         f'Epoch {epoch}: Loss={loss_total.item():.2f}, ARI={adjscore:.4f}, NMI={nmi:.4f}, Clusters={n_pred}')
