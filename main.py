@@ -1,3 +1,7 @@
+import os
+# Fix for KMeans memory leak on Windows with MKL
+os.environ["OMP_NUM_THREADS"] = "15"
+
 import numpy as np
 import torch
 import scipy.sparse as sp
@@ -7,31 +11,29 @@ import time
 from random import randint
 import math
 
-# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available 
+# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
 
-dataset = "ExampleData"
+dataset = "baron3"
 nClusters = 14
-adj, features, labels = load_data('ExampleData', './data/ExampleData', True)
+adj, features, labels = load_data('baron3', './data/baron3', True)
 
 features_new = features.toarray()
 num_nodes = features.shape[0]
 num_features = features.shape[1]
 
 # Network hyperparameter
-embedding_size = 45
-num_neurons = 90
+embedding_size = 32
+num_neurons = 128
 save_path = "./results/"
 
 # Clustering hyperparameters
 epochs_cluster = 200
-lr_cluster = 0.01
+lr_cluster = 0.001
 
 # Configure the device to cuda
-torch.set_default_tensor_type('torch.cuda.FloatTensor') 
-device = torch.device("cuda")
-print(torch.cuda.is_available())
-
-# Data processing 
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Data processing
 adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape)
 adj.eliminate_zeros()
 adj_norm = preprocess_graph(adj)
@@ -57,12 +59,12 @@ start = time.perf_counter()
 acc_array = []
 
 ress = []
-seed = 42 
+seed = 42
 
 network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation="Sigmoid", seed=seed)
 network.to(device)
 res, y_pred, y = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer="Adam", epochs=epochs_cluster, lr=lr_cluster, save_path=save_path, dataset=dataset, features_new=features_new)
-end = time.perf_counter()
 
+end = time.perf_counter()
 print(f"Total time: {end - start:0.4f} seconds")
-    
+print(f"Training result: ACC={res[0]} | ARI= {res[1]} | NMI= {res[2]}")
