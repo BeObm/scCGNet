@@ -23,12 +23,12 @@ print("Combines: GMCM + Spectral Init + Graph Structure + All Fixes")
 print("="*60)
 
 # Dataset
-dataset = "baron3"
+dataset = "baron4"
 nClusters = 14
 
 # Load data
 print("\n[1/6] Loading data...")
-adj, features, labels = load_data('baron3', './data/baron3', True)
+adj, features, labels = load_data('baron4', './data/baron4', True)
 
 features_new = features.toarray()
 num_nodes = features.shape[0]
@@ -95,14 +95,14 @@ weight_tensor_orig[weight_mask_orig] = pos_weight_orig
 print("\n[5/6] Creating Final GMCM-VGAE model...")
 seed = 42
 
-epochs_cluster_0 = [200,500,750,1000,1500,2000,2500,3000,3500,4000,4500,5000]
-lr_cluster_0 = [0.000001,0.00001,0.0001,0.001,0.01,0.1,0.0005,0.00005] # Increased from 0.001 for faster learning
-alpha_recons_0=[0.00001, 0.01,0.002, 0.003, 0.004, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-beta_cluster_0=[0.1,1,10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 0.070, 0.080, 0.090, 0.0100]
-gamma_structure_0=[0.1,1,10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 0.070, 0.080, 0.090, 0.0100]
-delta_graph_0=[0.1,1,10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 0.070, 0.080, 0.090, 0.0100]
-embedding_size_0 = [32,64,128]
-num_neurons_0 = [16,32,64,128,512,1024]    # More capacity for graph learning
+epochs_cluster_0 = [500,750]
+lr_cluster_0 = [0.001,0.01] # Increased from 0.001 for faster learning
+alpha_recons_0=[ 0.1, 0.8]
+beta_cluster_0=[0.1, 0.001]
+gamma_structure_0=[0.1, 0.001]
+delta_graph_0=[0.1, 0.001]
+embedding_size_0 = [32]
+num_neurons_0 = [128,512]    # More capacity for graph learning
 
 result_dict=defaultdict(list)
 start_time = time.perf_counter()
@@ -126,7 +126,6 @@ for epochs_cluster in tqdm(epochs_cluster_0):
                                   f"delta_graph({delta_graph}) | "
                                   f"num_neurons({num_neurons})"
                               )
-
                               network = GMCM_VGAE_Final(
                                     adj=adj_norm,
                                     num_neurons=num_neurons,
@@ -169,6 +168,9 @@ for epochs_cluster in tqdm(epochs_cluster_0):
                               result_dict["delta_graph_cluster"].append(delta_graph)
                               result_dict["embedding_size_cluster"].append(embedding_size)
                               result_dict["num_neurons_cluster"].append(num_neurons)
+                              result_dict["ACC"].append(res[0])
+                              result_dict["ARI"].append(res[1])
+                              result_dict["NMI"].append(res[2])
 result_data=pd.DataFrame(result_dict)
 result_data.to_csv(f"{save_path}{dataset}/cluster/results.csv")
 

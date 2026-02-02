@@ -1,5 +1,4 @@
-import torch
-import numpy as np
+
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
@@ -361,9 +360,10 @@ class GMCM_VGAE_Final(nn.Module):
                 torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                 opti.step()
                 scheduler.step()
-
+                max_reached=False
                 # Track best
                 if adjscore > currmax:
+                    max_reached=True
                     finalist = [acc, adjscore, nmi, Loss_total.detach().cpu().numpy(), epoch]
                     currmax = adjscore
                     patience_counter = 0
@@ -377,7 +377,8 @@ class GMCM_VGAE_Final(nn.Module):
 
                 if patience_counter >= patience:
                     print(f"\n[Early Stopping] No improvement for {patience} epochs")
-                    print(f"Best ARI: {currmax:.4f} at epoch {finalist[4]}")
+                    if max_reached==True:
+                         print(f"Best ARI: {currmax:.4f} at epoch {finalist[4]}")
                     break
 
             except Exception as e:
