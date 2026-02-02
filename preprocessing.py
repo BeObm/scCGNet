@@ -3,8 +3,10 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
+from matplotlib import pyplot as plt
 
-# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available 
+
+# Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
 def parse_index_file(filename):
     """Parse the index file path
@@ -91,3 +93,29 @@ def preprocess_graph(adj):
     degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
     adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
     return sparse_to_tuple(adj_normalized)
+
+def plot_Loss_list(Loss_list):
+    """Plot the Loss_list
+    Args:
+        Loss_list: Loss_list
+    Returns:
+    """
+    m=0
+    l=19
+    total_lost=Loss_list['total']
+    Loss_recons=Loss_list['Loss_recons']
+    Loss_gmcm=Loss_list['Loss_gmcm']
+    Loss_zinb= Loss_list['Loss_zinb']
+    n = range(len(Loss_gmcm))
+
+    print(f"size of n is {len(n)} and size of total_lost is {len(total_lost)}, size of Loss_recons is {len(Loss_recons)}")
+    print(f"size of n is {len(n)} and size of Loss_zinb is {len(Loss_zinb)}, size of Loss_gmcm is {len(Loss_gmcm)}")
+
+    fig = plt.figure()
+    plt.plot(n,total_lost,label='total_lost',color='blue')
+    plt.plot(n,Loss_recons,label='Loss_recons',color='red')
+    plt.plot(n,Loss_gmcm,label='Loss_gmcm',color='green')
+    plt.plot(n,Loss_zinb,label='Loss_zinb',color='black')
+    plt.legend(loc='upper right')
+    plt.show()
+    plt.savefig('Loss_list.png')

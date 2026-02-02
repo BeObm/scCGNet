@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import scipy.sparse as sp
 from model import GMCM_VGAE
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph
+from preprocessing import load_data, sparse_to_tuple, preprocess_graph,plot_Loss_list
 import time
 from random import randint
 import math
@@ -44,6 +44,7 @@ norm = adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.su
 adj_label = adj + sp.eye(adj.shape[0])
 adj_label = sparse_to_tuple(adj_label)
 
+
 adj_norm = torch.cuda.sparse.FloatTensor(torch.LongTensor(adj_norm[0].T).cuda(), torch.FloatTensor(adj_norm[1]).cuda(), torch.Size(adj_norm[2]))
 adj_label = torch.cuda.sparse.FloatTensor(torch.LongTensor(adj_label[0].T).cuda(), torch.FloatTensor(adj_label[1]).cuda(), torch.Size(adj_label[2]))
 features = torch.cuda.sparse.FloatTensor(torch.LongTensor(features[0].T).cuda(), torch.FloatTensor(features[1]).cuda(), torch.Size(features[2]))
@@ -63,8 +64,9 @@ seed = 42
 
 network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation="Sigmoid", seed=seed)
 network.to(device)
-res, y_pred, y = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer="Adam", epochs=epochs_cluster, lr=lr_cluster, save_path=save_path, dataset=dataset, features_new=features_new)
+res, y_pred, y,loss_list = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer="Adam", epochs=epochs_cluster, lr=lr_cluster, save_path=save_path, dataset=dataset, features_new=features_new)
 
+plot_Loss_list(loss_list)
 end = time.perf_counter()
 print(f"Total time: {end - start:0.4f} seconds")
 print(f"Training result: ACC={res[0]} | ARI= {res[1]} | NMI= {res[2]}")
