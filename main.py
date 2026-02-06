@@ -12,7 +12,7 @@ from random import randint
 import math
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
-
+seed = 123
 dataset = "baron3"
 nClusters = 14
 adj, features, labels = load_data('baron3', './data/baron3', True)
@@ -23,7 +23,7 @@ num_features = features.shape[1]
 
 # Network hyperparameter
 embedding_size = 45
-num_neurons = 90
+num_neurons = 256
 save_path = "./results/"
 
 # Clustering hyperparameters
@@ -46,9 +46,17 @@ norm = adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.su
 adj_label = adj + sp.eye(adj.shape[0])
 adj_label = sparse_to_tuple(adj_label)
 
-adj_norm = torch.cuda.sparse.FloatTensor(torch.LongTensor(adj_norm[0].T).cuda(), torch.FloatTensor(adj_norm[1]).cuda(), torch.Size(adj_norm[2]))
-adj_label = torch.cuda.sparse.FloatTensor(torch.LongTensor(adj_label[0].T).cuda(), torch.FloatTensor(adj_label[1]).cuda(), torch.Size(adj_label[2]))
-features = torch.cuda.sparse.FloatTensor(torch.LongTensor(features[0].T).cuda(), torch.FloatTensor(features[1]).cuda(), torch.Size(features[2]))
+
+
+def to_sparse_tensor(data):
+    indices = torch.LongTensor(data[0].T).to(device)
+    values = torch.FloatTensor(data[1]).to(device)
+    shape = torch.Size(data[2])
+    return torch.sparse.FloatTensor(indices, values, shape).to(device)
+
+adj_norm = to_sparse_tensor(adj_norm)
+adj_label = to_sparse_tensor(adj_label)
+features = to_sparse_tensor(features)
 
 weight_mask_orig = adj_label.to_dense().view(-1) == 1
 weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
@@ -61,7 +69,6 @@ start = time.perf_counter()
 acc_array = []
 
 ress = []
-seed = 42
 
 network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation="Sigmoid", seed=seed)
 network.to(device)
