@@ -119,4 +119,4 @@ def get_device():
         device = torch.device("cpu")
         print("Using CPU")
 
-    return torch.device("cpu")
+    return device
