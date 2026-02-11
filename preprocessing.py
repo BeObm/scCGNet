@@ -3,7 +3,7 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-
+import scanpy as sc
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
@@ -100,7 +100,7 @@ def preprocess_graph(adj):
     rowsum = np.array(adj_.sum(1))
     degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
     adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
-    return sparse_to_tuple(adj_normalized)
+    return adj_normalized
 
 
 def get_device():
@@ -119,4 +119,44 @@ def get_device():
         device = torch.device("cpu")
         print("Using CPU")
 
-    return device
+    return torch.device("cpu")
+
+
+
+def load_scanpy_as_graph(dataset_name="pbmc3k_processed"):
+    """
+    Load a Scanpy dataset and convert it to graph format for GAE/VGAE.
+
+    Returns:
+        adj_norm: normalized adjacency (tuple: coords, values, shape)
+        features_tuple: features as tuple (coords, values, shape)
+        labels: integer cluster labels
+        num_clusters: number of unique clusters
+    """
+    # Load dataset from Scanpy
+    adata = getattr(sc.datasets, dataset_name)()
+
+    # Use Louvain labels if available
+    if 'louvain' in adata.obs.columns:
+        labels_raw = adata.obs['louvain'].astype('category')
+        labels = labels_raw.cat.codes.values
+        num_clusters = len(labels_raw.cat.categories)
+    else:
+       raise ValueError("Dataset not complete, no clusters found")
+
+    # Features
+    if sp.issparse(adata.X):
+        features = adata.X.tolil()
+    else:
+        features = sp.csr_matrix(adata.X)
+
+    # Adjacency graph
+    if 'connectivities' not in adata.obsp.keys():
+        sc.pp.neighbors(adata, n_neighbors=10, n_pcs=50)
+
+    adj = adata.obsp['connectivities']
+
+    # Preprocess adjacency and features using imported functions
+    adj_norm = preprocess_graph(adj)
+
+    return adj_norm, features, labels, num_clusters

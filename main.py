@@ -6,17 +6,24 @@ import numpy as np
 import torch
 import scipy.sparse as sp
 from model import GMCM_VGAE
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph
+from preprocessing import load_data, sparse_to_tuple, preprocess_graph,load_scanpy_as_graph
 import time
 from random import randint
 import math
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
-seed = 123
+seed = 8
 dataset = "baron3"
-nClusters = 14
-adj, features, labels = load_data('baron3', './data/baron3', True)
 
+
+if dataset in ['baron3','baron4']:
+    adj, features, labels = load_data('baron3', './data/baron3', True)
+    nClusters = 14
+elif dataset in ['pbmc3k_processed','pbmc3k',"moignard15","krumsiek11"]:
+    adj, features, labels ,nClusters =load_scanpy_as_graph(dataset)
+
+print(f"Selected dataset: {dataset}")
+print(f"Number of clusters: {nClusters}")
 features_new = features.toarray()
 num_nodes = features.shape[0]
 num_features = features.shape[1]
@@ -54,7 +61,7 @@ def to_sparse_tensor(data):
     shape = torch.Size(data[2])
     return torch.sparse.FloatTensor(indices, values, shape).to(device)
 
-adj_norm = to_sparse_tensor(adj_norm)
+# adj_norm = to_sparse_tensor(adj_norm)
 adj_label = to_sparse_tensor(adj_label)
 features = to_sparse_tensor(features)
 
@@ -72,6 +79,7 @@ ress = []
 
 network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation="Sigmoid", seed=seed)
 network.to(device)
+
 res, y_pred, y = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer="Adam", epochs=epochs_cluster, lr=lr_cluster, save_path=save_path, dataset=dataset, features_new=features_new)
 end = time.perf_counter()
 
