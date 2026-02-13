@@ -32,19 +32,21 @@ class GraphConvSparse(nn.Module):
 
 
 class MeanAct(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self, min_clamp, max_clamp, **kwargs):
         super(MeanAct, self).__init__(**kwargs)
-
+        self.min=min_clamp
+        self.max=max_clamp
     def forward(self, x):
-        return torch.clamp(torch.exp(x), min=1e-5, max=1e6)
+        return torch.clamp(torch.exp(x), min=self.min, max=self.max)
 
 
 class DispAct(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self, min_clamp, max_clamp,**kwargs):
         super(DispAct, self).__init__(**kwargs)
-
+        self.min = min_clamp
+        self.max = max_clamp
     def forward(self, x):
-        return torch.clamp(F.softplus(x), min=1e-4, max=1e4)
+        return torch.clamp(F.softplus(x),min=self.min, max=self.max)
 
 
 class Sigmoid(nn.Module):
@@ -76,12 +78,18 @@ class GMCM_VGAE(nn.Module):
         self.num_features = kwargs['num_features']
         self.embedding_size = kwargs['embedding_size']
         self.nClusters = kwargs['nClusters']
+        self.min_clamp_mean = kwargs['min_clamp_mean']
+        self.max_clamp_mean = kwargs['max_clamp_mean']
+        self.min_clamp_dis = kwargs['min_clamp_dis']
+        self.max_clamp_dis = kwargs['max_clamp_dis']
         if kwargs['activation'] == "ReLU":
             self.activation = torch.relu
-        if kwargs['activation'] == "Sigmoid":
+        elif kwargs['activation'] == "Sigmoid":
             self.activation = torch.sigmoid
-        if kwargs['activation'] == "Tanh":
+        elif kwargs['activation'] == "Tanh":
             self.activation = torch.tanh
+        elif kwargs["activation"]=="Linear":
+            self.activation = torch.nn.Identity
         self.seed = kwargs['seed']
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -101,8 +109,8 @@ class GMCM_VGAE(nn.Module):
         self.log_sigma2_c = nn.Parameter(torch.randn(self.nClusters, self.embedding_size), requires_grad=True)
 
         # ZINB decoder
-        self.Mean = nn.Sequential(nn.Linear(self.embedding_size, self.num_features), MeanAct())
-        self.Dispersion = nn.Sequential(nn.Linear(self.embedding_size, self.num_features), DispAct())
+        self.Mean = nn.Sequential(nn.Linear(self.embedding_size, self.num_features), MeanAct(self.min_clamp_mean,self.max_clamp_mean),)
+        self.Dispersion = nn.Sequential(nn.Linear(self.embedding_size, self.num_features), DispAct(self.min_clamp_dis,self.max_clamp_dis))
         self.Dropout = nn.Sequential(nn.Linear(self.embedding_size, self.num_features), nn.Sigmoid())
 
     def ZINB_loss(self, x, mean, disp, pi, scale_factor=1.0, ridge_lambda=0.0):
@@ -170,7 +178,7 @@ class GMCM_VGAE(nn.Module):
         Loss_total = Loss_recons + Loss_gmcm + Loss_zinb
         return Loss_total, Loss_recons, Loss_gmcm, Loss_zinb
 
-    def train(self, acc_list, adj_norm, features, adj_label, y, weight_tensor, norm, optimizer, epochs, lr, save_path,
+    def train(self, acc_list, adj_norm, features, adj_label, y, weight_tensor, norm, optimizer, epochs, lr,wd,momentum, save_path,
               dataset, features_new):
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -180,12 +188,12 @@ class GMCM_VGAE(nn.Module):
         weight_tensor = weight_tensor.to(device)
 
         if optimizer == "Adam":
-            opti = Adam(self.parameters(), lr=lr, weight_decay=0.01)
+            opti = Adam(self.parameters(), lr=lr, weight_decay=wd)
         elif optimizer == "SGD":
-            opti = SGD(self.parameters(), lr=lr, momentum=0.9, weight_decay=0.01)
+            opti = SGD(self.parameters(), lr=lr, momentum=momentum, weight_decay=wd)
         elif optimizer == "RMSProp":
-            opti = RMSprop(self.parameters(), lr=lr, weight_decay=0.01)
-        lr_s = StepLR(opti, step_size=10, gamma=0.9)
+            opti = RMSprop(self.parameters(), lr=lr, weight_decay=wd)
+        lr_s = StepLR(opti, step_size=10, gamma=momentum)
 
         import csv, os
         if not os.path.exists(save_path):

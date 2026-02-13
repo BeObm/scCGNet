@@ -12,20 +12,25 @@ from random import randint
 import math
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
-seed = 8
+save_path = "./results/"
 dataset = "baron3"
 nClusters = 14
-adj, features, labels = load_data('baron3', './data/baron3', True)
 
-features_new = features.toarray()
-num_nodes = features.shape[0]
-num_features = features.shape[1]
 
 # Network hyperparameter
 embedding_size = 45
 num_neurons = 256
-save_path = "./results/"
-
+activation="Sigmoid"
+optimizer="Adam"
+seed=8
+embedding_sizeL =45
+num_neuronsL = 256
+wd=0.01
+momentum=0.9
+min_clamp_mean=1e-5
+max_clamp_mean=1e6
+min_clamp_dis=1e-4
+max_clamp_dis=1e4
 # Clustering hyperparameters
 epochs_cluster = 200
 lr_cluster = 0.01
@@ -35,6 +40,12 @@ lr_cluster = 0.01
 device = torch.device("cpu")
 print(torch.cuda.is_available())
 
+
+adj, features, labels = load_data('baron3', './data/baron3', True)
+
+features_new = features.toarray()
+num_nodes = features.shape[0]
+num_features = features.shape[1]
 # Data processing
 adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape)
 adj.eliminate_zeros()
@@ -62,6 +73,7 @@ weight_mask_orig = adj_label.to_dense().view(-1) == 1
 weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
 weight_tensor_orig[weight_mask_orig] = pos_weight_orig
 
+
 print("start")
 # Start the timer
 start = time.perf_counter()
@@ -70,9 +82,10 @@ acc_array = []
 
 ress = []
 
-network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation="Sigmoid", seed=seed)
+
+network = GMCM_VGAE(adj = adj_norm , num_neurons=num_neurons, num_features=num_features, embedding_size=embedding_size, nClusters=nClusters, activation=activation, seed=seed,min_clamp_dis=min_clamp_dis,max_clamp_dis=max_clamp_dis,min_clamp_mean=min_clamp_mean,max_clamp_mean=max_clamp_mean)
 network.to(device)
-res, y_pred, y = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer="Adam", epochs=epochs_cluster, lr=lr_cluster, save_path=save_path, dataset=dataset, features_new=features_new)
+res, y_pred, y = network.train([], adj_norm, features, adj_label, labels, weight_tensor_orig, norm, optimizer=optimizer, epochs=epochs_cluster, lr=lr_cluster,wd=wd,momentum=momentum, save_path=save_path, dataset=dataset, features_new=features_new)
 end = time.perf_counter()
 
 print(f"Total time: {end - start:0.4f} seconds")
