@@ -20,20 +20,20 @@ dataset = "baron3"
 nClusters = 14
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [24,32]
-num_neuronsL = [48,64]
-activationL = ["Sigmoid","ReLU"]
+embedding_sizeL = [45,50,64]
+num_neuronsL = [64,90,256]
+activationL = ["Sigmoid","Linear"]
 optimizerL = ["Adam","SGD"]
-seedL = [82,42]
+seedL = [82,8,42]
 wdL = [0.01]
 momentumL = [0.9]
-min_clamp_meanL = [1e-5,1e-4]
-max_clamp_meanL = [1e4,1e5]
-min_clamp_disL = [1e-5,1e-4]
-max_clamp_disL = [1e4,1e5]
+min_clamp_meanL = [1e-5]
+max_clamp_meanL = [1e6]
+min_clamp_disL = [1e-4]
+max_clamp_disL = [1e4]
 
-epochs_clusteL = [300]
-lr_clusterL = [0.01,0.0001,0.001]
+epochs_clusteL = [300,800,1000]
+lr_clusterL = [0.0001,0.001,0.01]
 # -----------------------
 
 
@@ -117,7 +117,7 @@ total_configs = (
 
 print("Total number of configurations:", total_configs)
 
-
+i=1
 for combo in grid:
 
     try:
@@ -153,7 +153,8 @@ for combo in grid:
 
         torch.manual_seed(seed)
         run_start = time.perf_counter()
-
+        print(f"\n ###{i} -- Training with: {config}")
+        i+=1
         network = GMCM_VGAE(
             adj=adj_norm,
             num_neurons=num_neurons,
@@ -191,16 +192,26 @@ for combo in grid:
         results["ACC"].append(res[0])
         results["ARI"].append(res[1])
         results["NMI"].append(res[2])
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        for k,v in config.items():
+            results[k].append(v)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     except:
+        print(f"Error with config: {i}")
+        results["ACC"].append(0)
+        results["ARI"].append(0)
+        results["NMI"].append(0)
+        for k, v in config.items():
+            results[k].append(v)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         continue
 end = time.perf_counter()
 
 print(f"Total grid time: {end - start:0.4f} seconds")
 
 df = pd.DataFrame(results)
-df.to_excel("grid_search_results.xlsx", index=False)
+df.to_excel("grid_search_results.xlsx")
 
 print("Saved to grid_search_results.xlsx")
 print(df.head())

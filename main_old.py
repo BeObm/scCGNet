@@ -18,13 +18,11 @@ nClusters = 14
 
 
 # Network hyperparameter
-embedding_size = 45
+embedding_size = 64
 num_neurons = 256
 activation="Sigmoid"
 optimizer="Adam"
 seed=8
-embedding_size =45
-num_neurons = 256
 wd=0.01
 momentum=0.9
 min_clamp_mean=1e-5
@@ -32,7 +30,7 @@ max_clamp_mean=1e6
 min_clamp_dis=1e-4
 max_clamp_dis=1e4
 # Clustering hyperparameters
-epochs_cluste = 200,300
+epochs_cluster = 350
 lr_cluster = 0.01
 
 # Configure the device to cuda

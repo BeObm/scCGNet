@@ -17,8 +17,6 @@ device = torch.device('cpu')
 class GraphConvSparse(nn.Module):
     def __init__(self, seed, input_dim, output_dim, adj, activation=torch.sigmoid, **kwargs):
         super(GraphConvSparse, self).__init__(**kwargs)
-        torch.manual_seed(seed)
-        np.random.seed(seed)
         self.weight = random_uniform_init(input_dim, output_dim, seed)
         self.adj = adj
         self.activation = activation
@@ -52,8 +50,7 @@ class DispAct(nn.Module):
 class Sigmoid(nn.Module):
     def __init__(self, seed, input_dim, output_dim, activation=torch.sigmoid, **kwargs):
         super(Sigmoid, self).__init__(**kwargs)
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+
         self.weight = random_uniform_init(input_dim, output_dim, seed)
         self.activation = activation
 
@@ -100,8 +97,7 @@ class GMCM_VGAE(nn.Module):
                                         activation=lambda x: x)
         self.gcn_logstddev = GraphConvSparse(self.seed, self.num_neurons, self.embedding_size, self.adj,
                                              activation=lambda x: x)
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
+
 
         # Clustering parameters initialization
         self.pi = nn.Parameter(torch.ones(self.nClusters) / self.nClusters, requires_grad=True)
@@ -142,8 +138,6 @@ class GMCM_VGAE(nn.Module):
         z_mu = z_mu.to(device)
         emb = emb.to(device)
 
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
         pi = self.pi.to(device)
         mu_c = self.mu_c.to(device)
         log_sigma2_c = self.log_sigma2_c
@@ -180,8 +174,7 @@ class GMCM_VGAE(nn.Module):
 
     def train(self, acc_list, adj_norm, features, adj_label, y, weight_tensor, norm, optimizer, epochs, lr,wd,momentum, save_path,
               dataset, features_new):
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
+
         adj_norm = adj_norm.to(device)
         features = features.to(device)
         adj_label = adj_label.to(device)
@@ -200,6 +193,7 @@ class GMCM_VGAE(nn.Module):
             os.makedirs(save_path)
 
         # Logging the resluts
+        os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
         logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
         logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
         logwriter.writeheader()
@@ -299,8 +293,7 @@ class GMCM_VGAE(nn.Module):
         hidden = self.base_gcn(x_features, adj)
         self.mean = self.gcn_mean(hidden, adj)
         self.logstd = self.gcn_logstddev(hidden, adj)
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
+
         gaussian_noise = torch.randn(x_features.size(0), self.embedding_size)
         sampled_z = gaussian_noise * torch.exp(self.logstd) + self.mean
         return self.mean, self.logstd, sampled_z
