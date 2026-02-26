@@ -4,6 +4,7 @@ from toolz.tests.test_dicttoolz import defaultdict
 from torch_geometric.transforms import RandomLinkSplit
 os.environ["OMP_NUM_THREADS"] = "15"
 import warnings
+from preprocessing import get_device
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -21,9 +22,9 @@ nClusters = 14
 
 # # ---- SEARCH SPACE ----
 embedding_sizeL = [64,256,512]
-num_neuronsL = [64,256,512]
+num_neuronsL = [16,64,256,512]
 activationL = ["Sigmoid"]
-optimizerL = ["Adam"]
+optimizerL = ["Adam","SGD"]
 seedL = [8,42]
 wdL = [0.0,0.001]
 momentumL = [0.9]
@@ -31,14 +32,12 @@ min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [32,64]
+gmcm_dimL = [16,32,64]
 epochs_clusteL = [300,500,800]
 lr_clusterL = [0.001,0.1,0.01]
 # -----------------------
 
-
-device = torch.device("cpu")
-print("CUDA available:", torch.cuda.is_available())
+device = get_device()
 
 adj, features, labels = load_data('baron3', './data/baron3', True)
 data=build_pyg_data(adj,features,labels)

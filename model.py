@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
 import math
+from preprocessing import get_device
 from torch.optim import Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import StepLR
 from sklearn import metrics
@@ -18,7 +19,7 @@ from scipy.optimize import linear_sum_assignment
 import csv, os
 from torch_geometric.nn import GCNConv,VGAE
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = get_device()
 
 
 tau_rank = 0.1
@@ -48,6 +49,7 @@ class GMCM_VGAE(nn.Module):
 
     def __init__(self, **kwargs):
         super(GMCM_VGAE, self).__init__()
+        device = get_device()
         self.num_neurons = kwargs['num_neurons']
         self.num_features = kwargs['num_features']
         self.embedding_size = kwargs['embedding_size']
@@ -56,6 +58,7 @@ class GMCM_VGAE(nn.Module):
         self.max_clamp_mean = kwargs['max_clamp_mean']
         self.min_clamp_dis = kwargs['min_clamp_dis']
         self.max_clamp_dis = kwargs['max_clamp_dis']
+        self.gmcm_dim = kwargs['gmcm_dim']
         if kwargs['activation'] == "ReLU":
             self.activation = torch.relu
         elif kwargs['activation'] == "Sigmoid":
@@ -68,20 +71,15 @@ class GMCM_VGAE(nn.Module):
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        # VGAE training parameters
-        self.encoder= GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation)
-        self.vgae= VGAE(self.encoder)
-        self.zinb_decoder= ZINBDecoder(self.embedding_size, self.num_features)
 
         # Clustering parameters initialization
-        self.cluster_head = ClusterHead(self.embedding_size, self.nClusters)
+        self.cluster_head = ClusterHead(self.embedding_size, self.nClusters).to(device)
 
-        self.gmcm_dim = kwargs.get("gmcm_dim", gmcm_dim)  # default 16
 
         # VGAE + ZINB
-        self.encoder = GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation)
-        self.vgae = VGAE(self.encoder).to(device)
-        self.zinb_decoder = ZINBDecoder(self.embedding_size, self.num_features).to(device)
+        self.encoder = GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation).to(device)
+        self.vgae = VGAE(self.encoder).to(device).to(device)
+        self.zinb_decoder = ZINBDecoder(self.embedding_size, self.num_features).to(device).to(device)
 
         # GMCM components (end-to-end)
         self.projector = GMCMProjector(in_dim=self.embedding_size, out_dim=self.gmcm_dim).to(device)
@@ -113,12 +111,12 @@ class GMCM_VGAE(nn.Module):
 
         # Learnable alpha/beta
         w_edge, w_zinb, w_kl, w_gmcm = self.weights()
-        total = w_edge * recon + w_zinb * zinb + w_kl * kl + w_gmcm * gmcm_nll
-        return total, recon, zinb, kl, gmcm_nll, resp, w_edge, w_zinb, w_kl, w_gmcm
+        total = w_edge * recon_loss + w_zinb * zinb_loss + w_kl * kl + w_gmcm * gmcm_nll
+        return total, recon_loss, zinb_loss, kl, gmcm_nll, resp, w_edge, w_zinb, w_kl, w_gmcm
 
     def train(self, data, optimizer, epochs, lr,wd,momentum, save_path,
               dataset):
-
+        data=data.to(device)
         if optimizer == "Adam":
             optim0 = Adam
         elif optimizer == "SGD":
@@ -183,7 +181,7 @@ class GMCM_VGAE(nn.Module):
 
             log_rows.append({
                 "epoch": epoch,
-                "loss": float(total.item()),
+                "loss": float(Loss_total.item()),
                 "recon": float(recon.item()),
                 "zinb": float(zinb.item()),
                 "kl": float(kl.item()),
@@ -216,11 +214,10 @@ class GMCM_VGAE(nn.Module):
             if epoch == 0 or (epoch + 1) % 10 == 0:
                 epoch_bar.write(
                     f"epoch={epoch + 1} loss={Loss_total.item():.4f} "
-                    f"recon={Loss_recons.item():.4f} zinb={Loss_zinb.item():.4f} "
-                    f"kl={Loss_kl.item():.4f} gmcm={Loss_gmcm.item():.4f} "
-                    f"alpha={alpha:.3g} beta={beta:.3g} | ARI={ari:.4f} NMI={nmi:.4f} ACC={acc:.4f}"
+                    f"recon={recon.item():.4f} zinb={zinb.item():.4f} "
+                    f"kl={kl.item():.4f} gmcm={gmcm_nll.item():.4f} "
+                    f" ARI={ari:.4f} NMI={nmi:.4f} ACC={acc:.4f}"
                 )
-
             if bad_epochs >= patience:
                 epoch_bar.write(f"Early stopping at epoch {epoch + 1}. Best ARI={best_ari:.4f}")
                 break

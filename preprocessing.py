@@ -230,3 +230,26 @@ def get_pos_neg_edges(split_data):
         pos = idx[:, y == 1]
         neg = idx[:, y == 0]
         return pos, neg
+
+def get_device(verbose=True):
+    """
+    Select computation device in priority order:
+    CUDA (NVIDIA GPU) -> MPS (Apple Silicon) -> CPU
+    """
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        backend = torch.cuda.get_device_name(0)
+
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+        backend = "Apple Metal (MPS)"
+
+    else:
+        device = torch.device("cpu")
+        backend = "CPU"
+
+    if verbose:
+        print(f"[Device] Using {device} — {backend}")
+
+    return device
