@@ -20,12 +20,10 @@ from torch_geometric.nn import GCNConv,VGAE
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-gamma = 1.0
+
 tau_rank = 0.1
-alpha_init = 1.0
-beta_init = 1.0
 min_delta = 1e-4
-patience = 30
+patience = 50
 
 class GCNEncoder(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, latent_channels,activation=torch.relu):
@@ -90,7 +88,12 @@ class GMCM_VGAE(nn.Module):
         self.gmcm = DiagGMM(n_components=self.nClusters, n_features=self.gmcm_dim).to(device)
 
         # Learnable weights
-        self.weights = LossWeights(alpha_init=alpha_init, beta_init=beta_init).to(device)
+        self.weights = LossWeights(
+            w_edge_init=1.0,
+            w_zinb_init=1.0,
+            w_kl_init=1.0,
+            w_gmcm_init=1.0
+        ).to(device)
 
     def Calculate_Loss(self, z, data, mu, theta, pi):
         # Edge reconstruction
@@ -109,10 +112,9 @@ class GMCM_VGAE(nn.Module):
         resp, gmcm_nll = self.gmcm(Y)
 
         # Learnable alpha/beta
-        alpha, beta = self.weights()
-
-        total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
-        return total, recon_loss, gmcm_nll, zinb_loss, kl, resp, alpha, beta
+        w_edge, w_zinb, w_kl, w_gmcm = self.weights()
+        total = w_edge * recon + w_zinb * zinb + w_kl * kl + w_gmcm * gmcm_nll
+        return total, recon, zinb, kl, gmcm_nll, resp, w_edge, w_zinb, w_kl, w_gmcm
 
     def train(self, data, optimizer, epochs, lr,wd,momentum, save_path,
               dataset):
@@ -139,9 +141,7 @@ class GMCM_VGAE(nn.Module):
 
         # Logging the resluts
         os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
-        logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
-        logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
-        logwriter.writeheader()
+        log_rows = []
 
         epoch_bar = tqdm(range(epochs))
 
@@ -172,7 +172,7 @@ class GMCM_VGAE(nn.Module):
             z = self.vgae.encode(x, edge_index)  # (N, embedding_size)
             mu, theta, pi = self.zinb_decoder(z)
 
-            Loss_total, Loss_recons, Loss_gmcm, Loss_zinb, Loss_kl, resp, alpha, beta = \
+            Loss_total, recon, zinb, kl, gmcm_nll, resp, w_edge, w_zinb, w_kl, w_gmcm = \
                 self.Calculate_Loss(z, data, mu, theta, pi)
 
             Loss_total.backward()
@@ -180,6 +180,22 @@ class GMCM_VGAE(nn.Module):
 
             # metrics (train). If you have val_data, evaluate on val_data instead.
             ari, nmi, acc = self.eval_clustering_from_resp(resp, y)
+
+            log_rows.append({
+                "epoch": epoch,
+                "loss": float(total.item()),
+                "recon": float(recon.item()),
+                "zinb": float(zinb.item()),
+                "kl": float(kl.item()),
+                "gmcm": float(gmcm_nll.item()),
+                "w_edge": float(w_edge),
+                "w_zinb": float(w_zinb),
+                "w_kl": float(w_kl),
+                "w_gmcm": float(w_gmcm),
+                "ari": float(ari),
+                "nmi": float(nmi),
+                "acc": float(acc),
+            })
 
             # early stopping on ARI
             improved = (ari > best_ari + min_delta)
@@ -219,6 +235,9 @@ class GMCM_VGAE(nn.Module):
 
         torch.save(best_state, save_path + dataset + "/cluster/best_by_ari.pt")
         print(f"Best ARI={best_ari:.4f}")
+        log_df = pd.DataFrame(log_rows)
+        csv_path = os.path.join(save_path, dataset, "cluster", "log.csv")
+        log_df.to_csv(csv_path, index=False)
         return ari, nmi, acc
 
 
@@ -520,7 +539,24 @@ class DiagGMM(nn.Module):
         resp = torch.softmax(log_joint, dim=1)                          # (N,K)
         return resp, nll
 
+
 class LossWeights(nn.Module):
+    def __init__(self, w_edge_init=1.0, w_zinb_init=1.0, w_kl_init=1.0, w_gmcm_init=1.0):
+        super().__init__()
+        # unconstrained params (log space init)
+        self._we = nn.Parameter(torch.tensor(float(w_edge_init)).log())
+        self._wz = nn.Parameter(torch.tensor(float(w_zinb_init)).log())
+        self._wk = nn.Parameter(torch.tensor(float(w_kl_init)).log())
+        self._wg = nn.Parameter(torch.tensor(float(w_gmcm_init)).log())
+
+    def forward(self):
+        # positive, clamped
+        we = (F.softplus(self._we) + 1e-8).clamp(1e-4, 1e4)
+        wz = (F.softplus(self._wz) + 1e-8).clamp(1e-4, 1e4)
+        wk = (F.softplus(self._wk) + 1e-8).clamp(1e-4, 1e4)
+        wg = (F.softplus(self._wg) + 1e-8).clamp(1e-4, 1e4)
+        return we, wz, wk, wg
+class LossWeights0(nn.Module):
     def __init__(self, alpha_init=1.0, beta_init=1.0):
         super().__init__()
         self._a = nn.Parameter(torch.tensor(float(alpha_init)).log())
