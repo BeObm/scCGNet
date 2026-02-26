@@ -3,7 +3,9 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-
+from torch_geometric.data import Data
+from torch_geometric.utils import from_scipy_sparse_matrix, to_undirected, remove_self_loops
+from torch_geometric.transforms import RandomLinkSplit
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
@@ -87,19 +89,37 @@ def sparse_to_tuple(sparse_mx):
 
 
 def preprocess_graph(adj):
-    """Preprocess the graphs
+    """
+    Compute GCN-style normalized adjacency:
+        Â = D^{-1/2} (A + I) D^{-1/2}
+    and return it as (coords, values, shape) via sparse_to_tuple().
 
-    Args:
-        adj: Adjacency matrix
+    Parameters
+    ----------
+    adj : array-like or scipy.sparse.spmatrix
+        Square adjacency matrix.
 
-    Returns:
-        _type_: normalized adjacency matrix
+    Returns
+    -------
+    tuple
+        Output of sparse_to_tuple(Â),
     """
     adj = sp.coo_matrix(adj)
-    adj_ = adj + sp.eye(adj.shape[0])
-    rowsum = np.array(adj_.sum(1))
-    degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
-    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
+    n, m = adj.shape
+    if n != m:
+        raise ValueError(f"adj must be square, got {adj.shape}")
+
+    adj_ = adj + sp.eye(n, dtype=adj.dtype, format="coo")
+
+    rowsum = np.asarray(adj_.sum(axis=1)).ravel()  # degrees
+    # Guard against non-positive degrees (signed/invalid graphs)
+    if np.any(rowsum <= 0):
+        raise ValueError("Non-positive degree encountered; cannot take d^(-1/2).")
+
+    d_inv_sqrt = np.power(rowsum, -0.5)
+    D_inv_sqrt = sp.diags(d_inv_sqrt, format="coo")
+
+    adj_normalized = (D_inv_sqrt @ adj_ @ D_inv_sqrt).tocoo()
     return sparse_to_tuple(adj_normalized)
 
 
@@ -120,3 +140,93 @@ def get_device():
         print("Using CPU")
 
     return device
+
+
+
+def to_pyg_data(adj, features, labels=None, make_undirected=False, add_self_loops=False):
+    # --- adjacency -> edge_index / edge_weight ---
+    adj = sp.coo_matrix(adj)  # safe for dense or sparse input
+
+    if not add_self_loops:
+        # remove diagonal (self-loops) if present
+        adj = adj - sp.diags(adj.diagonal(), offsets=0, shape=adj.shape, format="coo")
+        adj.eliminate_zeros()
+    else:
+        # ensure self-loops exist
+        adj = (adj + sp.eye(adj.shape[0], format="coo")).tocoo()
+
+    if make_undirected:
+        # symmetrize by taking max weight in either direction
+        adj_t = adj.transpose().tocoo()
+        adj = adj.maximum(adj_t).tocoo()
+
+    # COO gives row, col, data
+    row = torch.from_numpy(adj.row.astype(np.int64))
+    col = torch.from_numpy(adj.col.astype(np.int64))
+    edge_index = torch.stack([row, col], dim=0)  # [2, num_edges]
+
+    edge_weight = torch.from_numpy(adj.data.astype(np.float32))  # [num_edges]
+
+    # --- features -> x ---
+    if sp.issparse(features):
+        features = features.tocsr()
+        x = torch.from_numpy(features.toarray()).float()
+    else:
+        x = torch.from_numpy(np.asarray(features)).float()
+
+    # --- labels -> y ---
+    data_kwargs = {"x": x, "edge_index": edge_index, "edge_weight": edge_weight}
+    if labels is not None:
+        y = torch.from_numpy(np.asarray(labels)).long()
+        data_kwargs["y"] = y
+
+    data = Data(**data_kwargs)
+    return data
+
+def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag=True):
+    adj = sp.coo_matrix(adj)
+    n, m = adj.shape
+    if n != m:
+        raise ValueError(f"adj must be square, got {adj.shape}")
+
+    if remove_diag:
+        adj = adj - sp.diags(adj.diagonal(), offsets=0, shape=adj.shape, format="coo")
+        adj.eliminate_zeros()
+
+    edge_index, _ = from_scipy_sparse_matrix(adj)
+
+    if make_undirected:
+        edge_index = to_undirected(edge_index)
+
+    if sp.issparse(features):
+        x = torch.from_numpy(features.toarray()).float()
+    else:
+        x = torch.from_numpy(np.asarray(features)).float()
+
+    data = Data(x=x, edge_index=edge_index)
+
+    if labels is not None:
+        data.y = torch.from_numpy(np.asarray(labels)).long()
+
+    return data
+
+def get_pos_neg_edges(split_data):
+    """
+    Return (pos_edge_index, neg_edge_index) each with shape [2, E].
+    Handles common PyG attribute variants.
+    """
+    # Newer versions:
+    if hasattr(split_data, "pos_edge_label_index") and hasattr(split_data, "neg_edge_label_index"):
+        return split_data.pos_edge_label_index, split_data.neg_edge_label_index
+
+    # Older versions:
+    if hasattr(split_data, "pos_edge_index") and hasattr(split_data, "neg_edge_index"):
+        return split_data.pos_edge_index, split_data.neg_edge_index
+
+    # Unified label format:
+    if hasattr(split_data, "edge_label_index") and hasattr(split_data, "edge_label"):
+        idx = split_data.edge_label_index
+        y = split_data.edge_label
+        pos = idx[:, y == 1]
+        neg = idx[:, y == 0]
+        return pos, neg
