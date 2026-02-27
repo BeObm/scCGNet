@@ -199,6 +199,7 @@ def to_pyg_data(adj, features, labels=None, make_undirected=False, add_self_loop
     return data
 
 def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag=True):
+    num_classes=0
     adj = sp.coo_matrix(adj)
     n, m = adj.shape
     if n != m:
@@ -222,8 +223,10 @@ def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag
 
     if labels is not None:
         data.y = torch.from_numpy(np.asarray(labels)).long()
+        num_classes = int(data.y.unique().numel())
 
-    return data
+
+    return data,num_classes
 
 def get_pos_neg_edges(split_data):
     """
@@ -582,11 +585,9 @@ def pre_processing_single1(filename1, filename2, pre_process_paras, type='csv'):
 
 def load_data2(dataset_name,data_path):
     k = 10
-    n_clusters = 5
     load_type = 'csv'
     dropout_rate = 0.4
     method = 'NE'
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if k == 1:
         dropout_rate = 0.
     else:
@@ -594,7 +595,7 @@ def load_data2(dataset_name,data_path):
 
     file_path1 = f"{data_path}/data.tsv"
     file_path2 = f"{data_path}/label.ann"
-    dataset = load_data_origin_data1(file_path1, file_path2, load_type, scaling=True)
+    dataset = load_data_origin_data1(file_path1, file_path2, load_type, scaling=False)
     print(f" This is the dataset: Type:{type(dataset)}| {dataset}")
     print(dataset_name)
     print(dataset.x.shape)
@@ -607,13 +608,7 @@ def load_data2(dataset_name,data_path):
     if k > 20:
         k = 20
 
-    n_clusters = len(np.unique(dataset.y))
-    n_input = dataset.x.shape[1]
     A = getGraph(dataset_name, dataset.x, 0, k, method)
-    A = torch.tensor(A).to(device)
+    A = torch.tensor(A)
 
-    print(f"A shape: {A.shape}")
-    print(f"A: {type(A)}")
-    print(f"A: {A}")
-    print(dataset.y)
     return  A, dataset.x,dataset.y

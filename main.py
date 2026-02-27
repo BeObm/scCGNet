@@ -2,6 +2,7 @@ import os
 from preprocessing import to_pyg_data,build_pyg_data
 from toolz.tests.test_dicttoolz import defaultdict
 from torch_geometric.transforms import RandomLinkSplit
+from preprocessing import get_device
 os.environ["OMP_NUM_THREADS"] = "15"
 import warnings
 warnings.filterwarnings("ignore")
@@ -17,35 +18,42 @@ import pandas as pd
 
 save_path = "./results/"
 dataset = "Chung"
-nClusters = 14
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [64,256,512]
-num_neuronsL = [64,256,512]
-activationL = ["Sigmoid"]
+embedding_sizeL = [64,256]
+num_neuronsL = [64,256]
+activationL = ["ReLU"]
 optimizerL = ["Adam"]
-seedL = [8,42]
+seedL = [8]
 wdL = [0.0,0.001]
+tau_rankL = [0.1]
 momentumL = [0.9]
 min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
 gmcm_dimL = [32,64]
-epochs_clusteL = [300,500,800]
-lr_clusterL = [0.001,0.1,0.01]
+epochs_clusteL = [800]
+lr_clusterL = [0.001,0.0001]
 # -----------------------
 
 
-device = torch.device("cpu")
-print("CUDA available:", torch.cuda.is_available())
+device = get_device()
 
-adj, features, labels = load_data('baron3', './data/baron3')
-data=build_pyg_data(adj,features,labels)
+adj, features, labels = load_data(dataset, f'./data/{dataset}')
+data,nClusters=build_pyg_data(adj,features,labels)
+
+print("-----------------------------------------------")
+print(features.min(), features.max())
+print(np.allclose(features, np.round(features)))  # should be True for counts
+
+
+
+print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {nClusters} clusters")
 splitter = RandomLinkSplit(
     num_val=0.0,
     num_test=0.0,
-    is_undirected=True,              # set to your case
+    is_undirected=True,
     add_negative_train_samples=True,
     neg_sampling_ratio=1.0,
 )
@@ -63,6 +71,7 @@ grid = itertools.product(
     optimizerL,
     seedL,
     wdL,
+    tau_rankL,
     momentumL,
     min_clamp_meanL,
     max_clamp_meanL,
@@ -80,6 +89,7 @@ total_configs = (
     * len(seedL)
     * len(wdL)
     * len(momentumL)
+    * len(tau_rankL)
     * len(min_clamp_meanL)
     * len(max_clamp_meanL)
     * len(min_clamp_disL)
@@ -101,6 +111,7 @@ for combo in grid:
          optimizer,
          seed,
          wd,
+         tau_rank,
          momentum,
          min_clamp_mean,
          max_clamp_mean,
@@ -117,6 +128,7 @@ for combo in grid:
             "optimizer": optimizer,
             "seed": seed,
             "wd": wd,
+            "tau_rank": tau_rank,
             "momentum": momentum,
             "min_clamp_mean": min_clamp_mean,
             "max_clamp_mean": max_clamp_mean,
@@ -139,6 +151,7 @@ for combo in grid:
             embedding_size=embedding_size,
             nClusters=nClusters,
             activation=activation,
+            tau_rank=tau_rank,
             seed=seed,
             min_clamp_dis=min_clamp_dis,
             max_clamp_dis=max_clamp_dis,

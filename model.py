@@ -12,27 +12,28 @@ from torch.optim import Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import StepLR
 from sklearn import metrics
 from munkres import Munkres
+from preprocessing import get_device
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from scipy.optimize import linear_sum_assignment
 import csv, os
-from torch_geometric.nn import GCNConv,VGAE
+from torch_geometric.nn import GCNConv,VGAE,GraphSAGE
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = get_device()
 
 gamma = 1.0
-tau_rank = 0.1
+
 alpha_init = 1.0
 beta_init = 1.0
 min_delta = 1e-4
-patience = 30
+patience = 50
 
 class GCNEncoder(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, latent_channels,activation=torch.relu):
         super().__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv_mu = GCNConv(hidden_channels, latent_channels)
-        self.conv_logvar = GCNConv(hidden_channels, latent_channels)
+        self.conv1 = GraphSAGE(in_channels, hidden_channels,num_layers=2)
+        self.conv_mu = GraphSAGE(hidden_channels, latent_channels,num_layers=2)
+        self.conv_logvar = GraphSAGE(hidden_channels, latent_channels,num_layers=2)
         self.activation = activation
 
     def forward(self, x, edge_index):
@@ -54,10 +55,12 @@ class GMCM_VGAE(nn.Module):
         self.num_features = kwargs['num_features']
         self.embedding_size = kwargs['embedding_size']
         self.nClusters = kwargs['nClusters']
+        self.tau_rank = kwargs['tau_rank']
         self.min_clamp_mean = kwargs['min_clamp_mean']
         self.max_clamp_mean = kwargs['max_clamp_mean']
         self.min_clamp_dis = kwargs['min_clamp_dis']
         self.max_clamp_dis = kwargs['max_clamp_dis']
+        self.gmcm_dim =kwargs['gmcm_dim']
         if kwargs['activation'] == "ReLU":
             self.activation = torch.relu
         elif kwargs['activation'] == "Sigmoid":
@@ -71,23 +74,23 @@ class GMCM_VGAE(nn.Module):
         torch.manual_seed(self.seed)
 
         # VGAE training parameters
-        self.encoder= GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation)
-        self.vgae= VGAE(self.encoder)
-        self.zinb_decoder= ZINBDecoder(self.embedding_size, self.num_features)
+        self.encoder= GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation).to(device)
+        self.vgae= VGAE(self.encoder).to(device)
+        self.zinb_decoder= ZINBDecoder(self.embedding_size, self.num_features).to(device)
 
         # Clustering parameters initialization
-        self.cluster_head = ClusterHead(self.embedding_size, self.nClusters)
+        self.cluster_head = ClusterHead(self.embedding_size, self.nClusters).to(device)
 
-        self.gmcm_dim = kwargs.get("gmcm_dim", 32)  # default 16
+      # default 16
 
         # VGAE + ZINB
-        self.encoder = GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation)
+        self.encoder = GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation).to(device)
         self.vgae = VGAE(self.encoder).to(device)
         self.zinb_decoder = ZINBDecoder(self.embedding_size, self.num_features).to(device)
 
         # GMCM components (end-to-end)
         self.projector = GMCMProjector(in_dim=self.embedding_size, out_dim=self.gmcm_dim).to(device)
-        self.gmcm = DiagGMM(n_components=self.nClusters, n_features=self.gmcm_dim).to(device)
+        self.gmcm = GMCM(n_components=self.nClusters, n_features=self.gmcm_dim,tau_rank=self.tau_rank).to(device)
 
         # Learnable weights
         self.weights = LossWeights(alpha_init=alpha_init, beta_init=beta_init).to(device)
@@ -105,8 +108,13 @@ class GMCM_VGAE(nn.Module):
 
         # GMCM (project -> copula -> gmm)
         zc = self.projector(z)  # (N, gmcm_dim)
-        Y = self.copula_normal_scores_soft(zc, tau_rank=tau_rank)  # (N, gmcm_dim)
-        resp, gmcm_nll = self.gmcm(Y)
+        zc = (zc - zc.mean(0)) / (zc.std(0) + 1e-6)
+        resp, gmcm_nll = self.gmcm(zc)
+
+        print("-------------------------------z std--------")
+        print("z std mean:", z.std(dim=0).mean().item())
+        print("projected std mean:", zc.std(dim=0).mean().item())
+
 
         # Learnable alpha/beta
         alpha, beta = self.weights()
@@ -116,7 +124,7 @@ class GMCM_VGAE(nn.Module):
 
     def train(self, data, optimizer, epochs, lr,wd,momentum, save_path,
               dataset):
-
+        data=data.to(device)
         if optimizer == "Adam":
             optim0 = Adam
         elif optimizer == "SGD":
@@ -132,7 +140,6 @@ class GMCM_VGAE(nn.Module):
             list(self.weights.parameters()),
             lr=lr, weight_decay=wd
         )
-
 
         if not os.path.exists(save_path):
             os.makedirs(save_path)
@@ -178,7 +185,6 @@ class GMCM_VGAE(nn.Module):
             Loss_total.backward()
             opti.step()
 
-            # metrics (train). If you have val_data, evaluate on val_data instead.
             ari, nmi, acc = self.eval_clustering_from_resp(resp, y)
 
             # early stopping on ARI
@@ -194,8 +200,7 @@ class GMCM_VGAE(nn.Module):
                     "w": {k: v.detach().cpu().clone() for k, v in self.weights.state_dict().items()},
                 }
                 torch.save(best_state, save_path + dataset + "/cluster/best_by_ari.pt")
-            else:
-                bad_epochs += 1
+
 
             if epoch == 0 or (epoch + 1) % 10 == 0:
                 epoch_bar.write(
@@ -205,9 +210,7 @@ class GMCM_VGAE(nn.Module):
                     f"alpha={alpha:.3g} beta={beta:.3g} | ARI={ari:.4f} NMI={nmi:.4f} ACC={acc:.4f}"
                 )
 
-            if bad_epochs >= patience:
-                epoch_bar.write(f"Early stopping at epoch {epoch + 1}. Best ARI={best_ari:.4f}")
-                break
+
 
         # restore best
         if best_state is not None:
@@ -233,21 +236,7 @@ class GMCM_VGAE(nn.Module):
         P = torch.sigmoid(diff)  # approx I[x_i > x_j]
         return 1.0 + P.sum(dim=1)  # (N,)
 
-    def copula_normal_scores_soft(self,Z, tau_rank=0.1, eps=1e-6):
-        """
-        Z: (N,d) torch
-        Returns Y: (N,d) with Gaussian marginals via soft ranks.
-        """
-        N, d = Z.shape
-        Y_cols = []
-        for j in range(d):
-            r = self.soft_rank_1d(Z[:, j], tau=tau_rank)  # (N,)
-            u = r / (N + 1.0)  # (0,1)
-            u = u.clamp(eps, 1.0 - eps)
-            # Phi^{-1}(u) = sqrt(2)*erfinv(2u-1)
-            y = torch.sqrt(torch.tensor(2.0, device=Z.device)) * torch.erfinv(2.0 * u - 1.0)
-            Y_cols.append(y)
-        return torch.stack(Y_cols, dim=1)  # (N,d)
+
 
     def fit_gmcm_clusters(self, Z_torch, n_clusters, covariance_type="full", random_state=0):
         """
@@ -352,6 +341,7 @@ class GMCM_VGAE(nn.Module):
         return w[r, c].sum() / y_true.size
 
     def clustering_scores(self,y_true, y_pred):
+
         y_true = np.asarray(y_true).astype(np.int64)
         y_pred = np.asarray(y_pred).astype(np.int64)
         ari = adjusted_rand_score(y_true, y_pred)
@@ -361,8 +351,8 @@ class GMCM_VGAE(nn.Module):
 
     @torch.no_grad()
     def eval_clustering_from_resp(self,resp, y_true):
-        y_pred = resp.argmax(dim=1).detach().cpu().numpy()
-        y_true = y_true.detach().cpu().numpy()
+        y_pred = resp.argmax(dim=1).cpu().numpy()
+        y_true = y_true.cpu().numpy()
         return self.clustering_scores(y_true, y_pred)
 
 
@@ -478,46 +468,125 @@ class UncertaintyWeights(nn.Module):
         )
         return loss
 
-#Diagonal covariance (stable, simple)
-class DiagGMM(nn.Module):
-    def __init__(self, n_components, n_features):
-        super().__init__()
-        self.K = n_components
-        self.D = n_features
-        self.logits = nn.Parameter(torch.zeros(self.K))                 # mixing logits
-        self.means  = nn.Parameter(torch.randn(self.K, self.D) * 0.01)  # mu_k
-        self.log_vars = nn.Parameter(torch.zeros(self.K, self.D))       # log(sigma^2)
+def _soft_rank_1d(x: torch.Tensor, tau: float) -> torch.Tensor:
+    # x: (N,)
+    x = x.view(-1, 1)                      # (N,1)
+    diff = (x - x.t()) / tau               # (N,N)
+    P = torch.sigmoid(diff)                # approx I[x_i > x_j]
+    return 1.0 + P.sum(dim=1)              # (N,)
 
-    def log_prob_per_comp(self, Y):
+
+def copula_normal_scores_soft(Z: torch.Tensor, tau_rank: float = 0.1, eps: float = 1e-4) -> torch.Tensor:
+    # Z: (N,D)
+    N, D = Z.shape
+    s2 = torch.sqrt(torch.tensor(2.0, device=Z.device, dtype=Z.dtype))
+    cols = []
+    for j in range(D):
+        r = _soft_rank_1d(Z[:, j], tau=tau_rank)          # (N,)
+        u = (r / (N + 1.0)).clamp(eps, 1.0 - eps)         # (0,1)
+        y = s2 * torch.erfinv(2.0 * u - 1.0)              # Phi^{-1}(u)
+        cols.append(y)
+    return torch.stack(cols, dim=1)                       # (N,D)
+
+
+class GMCM(nn.Module):
+    """
+    GMCM module in Gaussian-score space with full covariance per component.
+
+    forward(Z) where Z is your latent (or projected latent):
+      - transforms Z -> Y via soft-rank copula normal scores (Gaussian marginals)
+      - fits mixture of full-cov Gaussians on Y (learnable parameters)
+      - returns responsibilities and NLL
+
+    Params:
+      n_components: K clusters
+      n_features:   D dimensions (after your projector)
+      tau_rank:     softness for differentiable ranks
+      eps:          numerical clamp for u in (eps,1-eps)
+      jitter:       diagonal jitter added for stability (via Cholesky)
+    """
+    def __init__(
+        self,
+        n_components: int,
+        n_features: int,
+        tau_rank: float = 0.1,
+        eps: float = 1e-4,
+        jitter: float = 1e-4,
+    ):
+        super().__init__()
+        self.K = int(n_components)
+        self.D = int(n_features)
+        self.tau_rank = float(tau_rank)
+        self.eps = float(eps)
+        self.jitter = float(jitter)
+
+        # mixing logits
+        self.logits = nn.Parameter(torch.zeros(self.K))                 # (K,)
+
+        # component means in Y-space
+        self.means = nn.Parameter(torch.randn(self.K, self.D) * 0.01)   # (K,D)
+
+        # full covariance via Cholesky factors L_k (lower-triangular)
+        # we store an unconstrained matrix and force lower-triangular with positive diagonal
+        self.L_unconstrained = nn.Parameter(torch.zeros(self.K, self.D, self.D))
+        nn.init.normal_(self.L_unconstrained, mean=0.0, std=0.01)
+
+    def _cholesky(self) -> torch.Tensor:
+        """
+        Returns L: (K,D,D) lower-triangular with positive diagonal.
+        Covariance is Sigma_k = L_k L_k^T.
+        """
+        L = torch.tril(self.L_unconstrained)                              # keep lower triangle
+        diag = torch.diagonal(L, dim1=-2, dim2=-1)                        # (K,D)
+        diag_pos = F.softplus(diag) + self.jitter                         # positive + jitter
+        L = L - torch.diag_embed(diag) + torch.diag_embed(diag_pos)       # replace diagonal
+        return L
+
+    def _log_prob_y_given_k(self, Y: torch.Tensor) -> torch.Tensor:
         """
         Y: (N,D)
-        returns log p(Y | k) : (N,K)
+        returns log p(Y | k): (N,K)
         """
         N, D = Y.shape
-        log_vars = self.log_vars.clamp(-10.0, 10.0)
-        vars_ = torch.exp(log_vars)                                      # (K,D)
+        assert D == self.D, f"Expected Y dim {self.D}, got {D}"
 
-        # (N,1,D) - (1,K,D) -> (N,K,D)
-        diff = Y[:, None, :] - self.means[None, :, :]
-        quad = (diff * diff) / (vars_[None, :, :] + 1e-8)               # (N,K,D)
+        L = self._cholesky()                                              # (K,D,D)
+        diff = Y[:, None, :] - self.means[None, :, :]                     # (N,K,D)
 
-        log_det = log_vars.sum(dim=1)                                   # (K,)
+        # Solve L_k v = diff^T for each k: v = L^{-1} diff
+        # reshape for batched triangular solve:
+        # diff -> (K,D,N)
+        diff_kdn = diff.permute(1, 2, 0)                                  # (K,D,N)
+        v = torch.linalg.solve_triangular(L, diff_kdn, upper=False)       # (K,D,N)
+
+        # quadratic term: ||v||^2
+        quad = (v * v).sum(dim=1).permute(1, 0)                           # (N,K)
+
+        # log|Sigma_k| = 2 * sum log diag(L_k)
+        logdet = 2.0 * torch.log(torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=1)  # (K,)
+
         const = D * math.log(2.0 * math.pi)
+        return -0.5 * (quad + logdet[None, :] + const)                    # (N,K)
 
-        return -0.5 * (quad.sum(dim=2) + log_det[None, :] + const)      # (N,K)
-
-    def forward(self, Y):
+    def forward(self, Z: torch.Tensor):
         """
+        Z: (N,D) latent/projection
         returns:
           resp: (N,K) responsibilities
-          nll:  scalar negative log-likelihood
+          nll:  scalar negative log-likelihood in Y-space
         """
-        log_pi = F.log_softmax(self.logits, dim=0)                      # (K,)
-        log_p_yk = self.log_prob_per_comp(Y)                            # (N,K)
-        log_joint = log_p_yk + log_pi[None, :]                          # (N,K)
-        log_p_y = torch.logsumexp(log_joint, dim=1)                     # (N,)
+        # copula transform: Z -> Y (Gaussian marginals)
+        Y = copula_normal_scores_soft(Z, tau_rank=self.tau_rank, eps=self.eps)    # (N,D)
+
+        # mixture log-likelihood
+        log_pi = F.log_softmax(self.logits, dim=0)                         # (K,)
+        log_p_yk = self._log_prob_y_given_k(Y)                             # (N,K)
+        log_joint = log_p_yk + log_pi[None, :]                             # (N,K)
+
+        log_p_y = torch.logsumexp(log_joint, dim=1)                        # (N,)
         nll = -log_p_y.mean()
-        resp = torch.softmax(log_joint, dim=1)                          # (N,K)
+
+        resp = torch.softmax(log_joint, dim=1)                             # (N,K)
         return resp, nll
 
 class LossWeights(nn.Module):
