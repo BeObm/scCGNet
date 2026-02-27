@@ -34,7 +34,7 @@ min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
 gmcm_dimL = [32,64]
 epochs_clusteL = [800]
-lr_clusterL = [0.001,0.0001]
+lr_clusterL = [0.01]
 # -----------------------
 
 

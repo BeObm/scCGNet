@@ -109,18 +109,32 @@ class GMCM_VGAE(nn.Module):
         # GMCM (project -> copula -> gmm)
         zc = self.projector(z)  # (N, gmcm_dim)
         zc = (zc - zc.mean(0)) / (zc.std(0) + 1e-6)
+
         resp, gmcm_nll = self.gmcm(zc)
 
-        print("-------------------------------z std--------")
-        print("z std mean:", z.std(dim=0).mean().item())
-        print("projected std mean:", zc.std(dim=0).mean().item())
-
-
-        # Learnable alpha/beta
         alpha, beta = self.weights()
 
         total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
-        return total, recon_loss, gmcm_nll, zinb_loss, kl, resp, alpha, beta
+
+        # ---- entropy sharpening ----
+        lam_ent = 0.01  # hyperparameter
+
+        p = resp.clamp_min(1e-9)
+        ent_loss = (p * p.log()).sum(dim=1).mean()
+
+        total = total + lam_ent * ent_loss
+        # ----------------------------
+
+
+        return total, recon_loss, zinb_loss, kl, gmcm_nll, resp,alpha, beta
+
+
+
+        # Learnable alpha/beta
+        # alpha, beta = self.weights()
+        #
+        # total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
+        # return total, recon_loss, gmcm_nll, zinb_loss, kl, resp, alpha, beta
 
     def train(self, data, optimizer, epochs, lr,wd,momentum, save_path,
               dataset):
