@@ -78,7 +78,7 @@ class GMCM_VGAE(nn.Module):
         # Clustering parameters initialization
         self.cluster_head = ClusterHead(self.embedding_size, self.nClusters)
 
-        self.gmcm_dim = kwargs.get("gmcm_dim", gmcm_dim)  # default 16
+        self.gmcm_dim = kwargs.get("gmcm_dim", 32)  # default 16
 
         # VGAE + ZINB
         self.encoder = GCNEncoder(self.num_features, self.num_neurons, self.embedding_size, self.activation)

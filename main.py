@@ -16,7 +16,7 @@ import itertools
 import pandas as pd
 
 save_path = "./results/"
-dataset = "baron3"
+dataset = "Chung"
 nClusters = 14
 
 # # ---- SEARCH SPACE ----
@@ -40,7 +40,7 @@ lr_clusterL = [0.001,0.1,0.01]
 device = torch.device("cpu")
 print("CUDA available:", torch.cuda.is_available())
 
-adj, features, labels = load_data('baron3', './data/baron3', True)
+adj, features, labels = load_data('baron3', './data/baron3')
 data=build_pyg_data(adj,features,labels)
 splitter = RandomLinkSplit(
     num_val=0.0,
