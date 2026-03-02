@@ -17,24 +17,24 @@ import itertools
 import pandas as pd
 
 save_path = "./results/"
-dataset = "Chung"
+dataset = "baron3"
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [64,256]
-num_neuronsL = [64,256]
-activationL = ["ReLU"]
-optimizerL = ["Adam"]
+embedding_sizeL = [512,1024]
+num_neuronsL = [32,64]
+activationL = ["ReLU","Tanh"]
+optimizerL = ["Adam","SGD"]
 seedL = [8]
-wdL = [0.0,0.001]
+wdL = [0.001]
 tau_rankL = [0.1]
 momentumL = [0.9]
 min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [32,64]
-epochs_clusteL = [800]
-lr_clusterL = [0.01]
+gmcm_dimL = [16,32,64,128]
+epochs_clusteL = [50]
+lr_clusterL = [0.01,0.001,0.005]
 # -----------------------
 
 
@@ -42,10 +42,6 @@ device = get_device()
 
 adj, features, labels = load_data(dataset, f'./data/{dataset}')
 data,nClusters=build_pyg_data(adj,features,labels)
-
-print("-----------------------------------------------")
-print(features.min(), features.max())
-print(np.allclose(features, np.round(features)))  # should be True for counts
 
 
 

@@ -1,0 +1,5 @@
+-README
+
+There is a set of data available, each containing a gene expression matrix and cell labels for each cell. You can use any one in the dataset for training and another for testing. Alternatively, you can perform cross-validation on any of the data.
+
+
