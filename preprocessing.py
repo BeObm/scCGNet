@@ -3,6 +3,7 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
+from sklearn.cluster.tests.test_k_means import n_clusters
 from torch_geometric.data import Data
 from torch_geometric.utils import from_scipy_sparse_matrix, to_undirected
 import torch
@@ -13,6 +14,7 @@ from sklearn.model_selection import train_test_split
 import pandas as pd
 import scanpy as sc
 from sklearn.preprocessing import minmax_scale
+from dataset_utils import *
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
 def parse_index_file(filename):
@@ -30,14 +32,37 @@ def parse_index_file(filename):
     return index
 
 
-def load_data(dataset, data_path):
+def load_data(dataset, data_path,n_neighbors,n_pcs):
     if dataset in ["baron3","baron4"]:
         adj, features, labels_int = load_data1(dataset, data_path)
-    elif dataset in ["Klein", "Chung"]:
-        adj, features, labels_int = load_data2(dataset, data_path)
+        data, n_clusters = build_pyg_data(adj, features, labels_int)
+
+    elif dataset in ["Klein", "Chung","YAN"]:
+        X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
+                                    f"{data_path}/label.ann",
+                                    f"{data_path}/cluster_distribution.xlsx")
+        data = cell_matrix_to_graph(X, y, n_neighbors, n_pcs)
+
+    elif dataset in ["facs_lung", "droplet_lung"]:
+        X,y,n_clusters = read_rds(f"{data_path}/{dataset}_norm.rds",
+                      f"{data_path}/{dataset}_meta.rds",
+                                  f"{data_path}/cluster_distribution.xlsx")
+        data = cell_matrix_to_graph(X,y,n_neighbors,n_pcs)
+
+    elif dataset in ["10X_PMBC", "human_kidney","Mouse","mouse_ES","worm_neuron"]:   #  These dataset have raw count data
+        data,n_clusters = h5_xy_to_pyg(path=f"{data_path}/{dataset}.h5",
+                                       n_neighbors=n_neighbors,
+                                       n_pcs=n_pcs,
+                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
+    elif dataset in ["Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea"]:
+        data,n_clusters = h5_to_pyg(path=f"{data_path}/{dataset}.h5",
+                                       n_neighbors=n_neighbors,
+                                       n_pcs=n_pcs,
+                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
+        
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
-    return adj, features, labels_int
+    return data, n_clusters
 
 def load_data1(dataset, data_path, modified=True):
     """Load the data
@@ -557,12 +582,12 @@ def read_txt(filename, take_log):
 
 
 def pre_processing_single1(filename1, filename2, pre_process_paras, type='csv'):
-    """ pre-processing of multiple datasets
+    """ pre-processing of multiple droplet_lung
     Args:
-        dataset_file_list: list of filenames of datasets
+        dataset_file_list: list of filenames of droplet_lung
         pre_process_paras: dict, parameters for pre-processing
     Returns:
-        dataset_list: list of datasets
+        dataset_list: list of droplet_lung
     """
     # parameters
     take_log = pre_process_paras['take_log']

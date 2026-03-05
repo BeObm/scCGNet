@@ -17,7 +17,9 @@ import itertools
 import pandas as pd
 
 save_path = "./results/"
-dataset = "baron3"
+dataset = "YAN"
+n_neighbors = 15
+n_pcs = 50
 
 # # ---- SEARCH SPACE ----
 embedding_sizeL = [512,1024]
@@ -40,12 +42,12 @@ lr_clusterL = [0.01,0.001,0.005]
 
 device = get_device()
 
-adj, features, labels = load_data(dataset, f'./data/{dataset}')
-data,nClusters=build_pyg_data(adj,features,labels)
+data,n_clusters= load_data(dataset, f'./data/{dataset}',n_neighbors,n_pcs)
 
 
 
-print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {nClusters} clusters")
+
+print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {n_clusters} clusters")
 splitter = RandomLinkSplit(
     num_val=0.0,
     num_test=0.0,
@@ -143,9 +145,9 @@ for combo in grid:
             data=train_data,
             num_neurons=num_neurons,
             gmcm_dim=gmcm_dim,
-            num_features=features.shape[1],
+            num_features=data.x.shape[1],
             embedding_size=embedding_size,
-            nClusters=nClusters,
+            nClusters=n_clusters,
             activation=activation,
             tau_rank=tau_rank,
             seed=seed,
