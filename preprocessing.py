@@ -40,26 +40,26 @@ def load_data(dataset, data_path,n_neighbors,n_pcs):
     elif dataset in ["Klein", "Chung","YAN"]:
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
-                                    f"{data_path}/cluster_distribution.xlsx")
+                                    f"{data_path}/cluster_distribution.csv")
         data = cell_matrix_to_graph(X, y, n_neighbors, n_pcs)
 
     elif dataset in ["facs_lung", "droplet_lung"]:
         X,y,n_clusters = read_rds(f"{data_path}/{dataset}_norm.rds",
                       f"{data_path}/{dataset}_meta.rds",
-                                  f"{data_path}/cluster_distribution.xlsx")
+                                  f"{data_path}/cluster_distribution.csv")
         data = cell_matrix_to_graph(X,y,n_neighbors,n_pcs)
 
-    elif dataset in ["10X_PMBC", "human_kidney","Mouse","mouse_ES","worm_neuron"]:   #  These dataset have raw count data
+    elif dataset in ["10X_PBMC", "human_kidney","Mouse","mouse_ES","worm_neuron"]:   #  These dataset have raw count data
         data,n_clusters = h5_xy_to_pyg(path=f"{data_path}/{dataset}.h5",
                                        n_neighbors=n_neighbors,
                                        n_pcs=n_pcs,
-                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
-    elif dataset in ["Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea"]:
+                                       csv_out=f"{data_path}/cluster_distribution.csv")
+    elif dataset in ["Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Zeisel"]:
         data,n_clusters = h5_to_pyg(path=f"{data_path}/{dataset}.h5",
                                        n_neighbors=n_neighbors,
                                        n_pcs=n_pcs,
-                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
-        
+                                       csv_out=f"{data_path}/cluster_distribution.csv")
+
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
     return data, n_clusters
@@ -171,14 +171,10 @@ def get_device():
     """
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
-        print("Using Apple MPS (Metal Performance Shaders)")
     else:
         device = torch.device("cpu")
-        print("Using CPU")
-
     return device
 
 

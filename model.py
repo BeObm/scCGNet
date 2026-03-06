@@ -28,18 +28,34 @@ beta_init = 1.0
 min_delta = 1e-4
 patience = 50
 
+
+
 class GCNEncoder(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, latent_channels,activation=torch.relu):
+    def __init__(self, in_channels, hidden_channels, latent_channels, activation=torch.relu):
         super().__init__()
-        self.conv1 = GraphSAGE(in_channels, hidden_channels,num_layers=2)
-        self.conv_mu = GraphSAGE(hidden_channels, latent_channels,num_layers=2)
-        self.conv_logvar = GraphSAGE(hidden_channels, latent_channels,num_layers=2)
+
+        self.conv1 = GCNConv(in_channels, hidden_channels)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels)
+
+        self.conv_mu = GCNConv(hidden_channels, latent_channels)
+        self.conv_logvar = GCNConv(hidden_channels, latent_channels)
+
         self.activation = activation
 
     def forward(self, x, edge_index):
+
         h = self.conv1(x, edge_index)
         h = self.activation(h)
-        return self.conv_mu(h, edge_index), self.conv_logvar(h, edge_index)
+
+        h = self.conv2(h, edge_index)
+        h = self.activation(h)   # H representation
+
+        mu = self.conv_mu(h, edge_index)
+        logvar = self.conv_logvar(h, edge_index)
+
+        return mu, logvar
+
+
 
 
 class GMCM_VGAE(nn.Module):
@@ -138,6 +154,13 @@ class GMCM_VGAE(nn.Module):
 
     def train(self, data, optimizer, epochs, lr,wd,momentum, save_path,
               dataset):
+        self.encoder.train()
+        self.vgae.train()
+        self.zinb_decoder.train()
+        self.projector.train()
+        self.gmcm.train()
+        self.weights.train()
+
         data=data.to(device)
         if optimizer == "Adam":
             optim0 = Adam
@@ -146,14 +169,10 @@ class GMCM_VGAE(nn.Module):
         elif optimizer == "RMSProp":
             optim0= RMSprop
 
-        opti = optim0(
-            list(self.vgae.parameters()) +
-            list(self.zinb_decoder.parameters()) +
-            list(self.projector.parameters()) +
-            list(self.gmcm.parameters()) +
-            list(self.weights.parameters()),
+        opti = optim0(self.parameters(),
             lr=lr, weight_decay=wd
         )
+
 
         if not os.path.exists(save_path):
             os.makedirs(save_path)

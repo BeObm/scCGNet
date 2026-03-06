@@ -1,4 +1,6 @@
 import os
+
+from dataset_utils import check_normalization, check_sparse
 from preprocessing import to_pyg_data,build_pyg_data
 from toolz.tests.test_dicttoolz import defaultdict
 from torch_geometric.transforms import RandomLinkSplit
@@ -17,16 +19,16 @@ import itertools
 import pandas as pd
 
 save_path = "./results/"
-dataset = "YAN"
+dataset = "baron3"
 n_neighbors = 15
 n_pcs = 50
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [512,1024]
-num_neuronsL = [32,64]
-activationL = ["ReLU","Tanh"]
-optimizerL = ["Adam","SGD"]
-seedL = [8]
+embedding_sizeL = [512]
+num_neuronsL = [64]
+activationL = ["ReLU"]
+optimizerL = ["Adam"]
+seedL = [666]
 wdL = [0.001]
 tau_rankL = [0.1]
 momentumL = [0.9]
@@ -34,25 +36,28 @@ min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [16,32,64,128]
+gmcm_dimL = [16]
 epochs_clusteL = [50]
-lr_clusterL = [0.01,0.001,0.005]
+lr_clusterL = [0.001]
 # -----------------------
 
 
 device = get_device()
+print(f" {'*'*9}Code running for {dataset} dataset on {device} {'*'*9}")
 
 data,n_clusters= load_data(dataset, f'./data/{dataset}',n_neighbors,n_pcs)
 
 
-
-
 print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {n_clusters} clusters")
+print(check_sparse(data.x))
+print(f"The dataset is: {check_normalization(data.x)}")
+raise ValueError("Technical break")
+
 splitter = RandomLinkSplit(
-    num_val=0.0,
+    num_val=0.0,   
     num_test=0.0,
     is_undirected=True,
-    add_negative_train_samples=True,
+    add_negative_train_samples=False,
     neg_sampling_ratio=1.0,
 )
 train_data, val_data, test_data = splitter(data)
@@ -156,6 +161,21 @@ for combo in grid:
             min_clamp_mean=min_clamp_mean,
             max_clamp_mean=max_clamp_mean
         ).to(device)
+
+
+
+        trainable_params = sum(p.numel() for p in network.parameters() if p.requires_grad)
+        print("Trainable parameters:", trainable_params)
+
+        # total = 0
+        # for name, p in network.named_parameters():
+        #     if p.requires_grad:
+        #         n = p.numel()
+        #         print(f"{name}: {n}")
+        #         total += n
+        #
+        # print("Total trainable parameters:", total)
+
 
         ari, nmi, acc  = network.train(
             train_data,
