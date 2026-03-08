@@ -8,6 +8,8 @@ import scanpy as sc
 import torch
 from torch_geometric.data import Data
 
+
+
 def read_rds(norm_filepath, meta_filepath, csv_out="cluster_distribution.csv"):
 
     # read expression matrix
@@ -60,25 +62,59 @@ def save_cluster_distribution(y, csv_out="cluster_distribution.csv"):
     dist_df.to_csv(csv_out, index=False)
     return n_clusters
 
-def h5_xy_to_pyg(path, n_neighbors=15, n_pcs=50,csv_out="cluster_distribution.csv"):
 
-    # read dataset
+
+
+def h5_xy_to_pyg(
+        path,
+        n_neighbors=15,
+        n_pcs=50,
+        n_hvg=2000,
+        target_sum=1e4,
+        csv_out="cluster_distribution.csv"
+):
+
+    # -------------------------
+    # 1. Load dataset
+    # -------------------------
     with h5py.File(path, "r") as f:
-        X = f["X"][:]
-        y = f["Y"][:]
+        X = f["X"][:]      # gene expression matrix
+        y = f["Y"][:]      # labels
 
-    # build AnnData
+    # Build AnnData object
     adata = ad.AnnData(X)
     adata.obs["label"] = y
 
-    # scanpy preprocessing
-    sc.pp.pca(adata, n_comps=n_pcs)
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
+    # -------------------------
+    # 2. Standard scRNA preprocessing
+    # -------------------------
 
-    # adjacency matrix
+    # library size normalization
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+
+    # log transform
+    sc.pp.log1p(adata)
+
+    # highly variable genes
+    sc.pp.highly_variable_genes(adata, n_top_genes=n_hvg)
+    adata = adata[:, adata.var["highly_variable"]]
+
+    # feature scaling
+    sc.pp.scale(adata, max_value=10)
+
+    # -------------------------
+    # 3. Dimensionality reduction
+    # -------------------------
+    sc.pp.pca(adata, n_comps=n_pcs)
+
+    # -------------------------
+    # 4. Graph construction
+    # -------------------------
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X_pca")
+
     A = adata.obsp["connectivities"]
 
-    # convert to edge_index
+    # convert adjacency to PyG edge index
     edge_index = np.vstack(A.nonzero())
     edge_index = torch.tensor(edge_index, dtype=torch.long)
 
@@ -87,34 +123,34 @@ def h5_xy_to_pyg(path, n_neighbors=15, n_pcs=50,csv_out="cluster_distribution.cs
 
     # labels
     y = torch.tensor(adata.obs["label"].values, dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index, y=y)
-    n_clusters=save_cluster_distribution(y, csv_out)
 
+    data = Data(x=x, edge_index=edge_index, y=y)
+
+    # cluster statistics
+    n_clusters = save_cluster_distribution(y, csv_out)
 
     return data, n_clusters
 
-def h5_to_pyg(path, n_neighbors=15, n_pcs=50,csv_out="cluster_distribution.csv"):
+
+
+
+
+def h5_to_pyg(
+        path,
+        n_neighbors=15,
+        n_pcs=50,
+        n_hvg=2000,
+        target_sum=1e4,
+        csv_out="cluster_distribution.csv"
+):
     """
-    Read Quake_Smart-seq2_Trachea.h5 and convert it to a PyTorch Geometric graph.
-
-    Parameters
-    ----------
-    path : str
-        Path to the HDF5 file.
-    n_neighbors : int
-        Number of neighbors used to build the KNN graph.
-    n_pcs : int
-        Number of principal components used for the graph.
-
-    Returns
-    -------
-    data : torch_geometric.data.Data
-        PyG graph object
-    adata : AnnData
-        AnnData object containing the processed dataset
+    Convert Quake_Smart-seq2_Trachea.h5 into a PyTorch Geometric graph
+    with a proper single-cell preprocessing pipeline.
     """
 
-    # --- read file ---
+    # -------------------------
+    # 1. Read HDF5 file
+    # -------------------------
     with h5py.File(path, "r") as f:
 
         grp = f["exprs"]
@@ -129,28 +165,68 @@ def h5_to_pyg(path, n_neighbors=15, n_pcs=50,csv_out="cluster_distribution.csv")
 
         y = f["obs"]["cluster"][:]
 
-    # --- build AnnData ---
+    # -------------------------
+    # 2. Build AnnData object
+    # -------------------------
     adata = ad.AnnData(X)
     adata.obs_names = cells
     adata.var_names = genes
     adata.obs["cluster"] = y
 
-    # --- Scanpy pipeline ---
-    sc.pp.pca(adata, n_comps=n_pcs)
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
+    # -------------------------
+    # 3. Standard scRNA-seq preprocessing
+    # -------------------------
 
-    # adjacency matrix
+    # library size normalization
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+
+    # log transform
+    sc.pp.log1p(adata)
+
+    # highly variable genes
+    sc.pp.highly_variable_genes(
+        adata,
+        n_top_genes=n_hvg,
+        flavor="seurat"
+    )
+
+    adata = adata[:, adata.var["highly_variable"]].copy()
+
+    # scaling
+    sc.pp.scale(adata, max_value=10)
+
+    # -------------------------
+    # 4. Dimensionality reduction
+    # -------------------------
+    sc.pp.pca(adata, n_comps=n_pcs)
+
+    # -------------------------
+    # 5. Graph construction
+    # -------------------------
+    sc.pp.neighbors(
+        adata,
+        n_neighbors=n_neighbors,
+        use_rep="X_pca"
+    )
+
     A = adata.obsp["connectivities"]
 
     edge_index = np.vstack(A.nonzero())
     edge_index = torch.tensor(edge_index, dtype=torch.long)
 
+    # node features
     x = torch.tensor(adata.obsm["X_pca"], dtype=torch.float)
-    y = torch.tensor(adata.obs["cluster"].values)
-    n_clusters=save_cluster_distribution(y, csv_out)
+
+    # labels
+    y = torch.tensor(adata.obs["cluster"].values, dtype=torch.long)
+
+    n_clusters = save_cluster_distribution(y, csv_out)
+
     data = Data(x=x, edge_index=edge_index, y=y)
 
     return data, n_clusters
+
+
 
 def read_tsv(norm_filepath, meta_filepath, csv_out="cluster_distribution.csv"):
 
@@ -192,22 +268,59 @@ def read_tsv(norm_filepath, meta_filepath, csv_out="cluster_distribution.csv"):
     return X, y,n_clusters
 
 
-def cell_matrix_to_graph(X, y, n_neighbors=15, n_pcs=50):
+def cell_matrix_to_graph(
+        X,
+        y,
+        n_neighbors=15,
+        n_pcs=50,
+        n_hvg=2000,
+        target_sum=1e4
+):
 
+    # build AnnData
     adata = sc.AnnData(X)
     adata.obs["label"] = y
 
+    # -------------------------
+    # scRNA-seq preprocessing
+    # -------------------------
+
+    # library size normalization
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+
+    # log transform
+    sc.pp.log1p(adata)
+
+    # highly variable genes
+    sc.pp.highly_variable_genes(adata, n_top_genes=n_hvg)
+
+    adata = adata[:, adata.var["highly_variable"]].copy()
+
+    # feature scaling
+    sc.pp.scale(adata, max_value=10)
+
+    # -------------------------
+    # dimensionality reduction
+    # -------------------------
     sc.pp.pca(adata, n_comps=n_pcs)
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
+
+    # -------------------------
+    # graph construction
+    # -------------------------
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X_pca")
 
     A = adata.obsp["connectivities"]
 
-    edge_index = torch.tensor(A.nonzero(), dtype=torch.long)
+    edge_index = np.vstack(A.nonzero())
+    edge_index = torch.tensor(edge_index, dtype=torch.long)
+
+    # node features (PCA embedding)
+    x = torch.tensor(adata.obsm["X_pca"], dtype=torch.float)
 
     data = Data(
-        x=torch.tensor(X, dtype=torch.float),
+        x=x,
         edge_index=edge_index,
-        y=torch.tensor(y)
+        y=torch.tensor(y, dtype=torch.long)
     )
 
     return data

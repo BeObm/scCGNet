@@ -19,16 +19,25 @@ import itertools
 import pandas as pd
 
 save_path = "./results/"
-dataset = "baron3"
+# dataset = "Quake_10x_Bladder"
+# dataset = "mouse_ES"
+# dataset = "Quake_Smart-seq2_Limb_Muscle"
+# dataset = "Quake_Smart-seq2_Trachea"
+# dataset = "worm_neuron"
+# dataset = "YAN"
+# dataset = "Zeisel"
+# dataset = "human_kidney"
+dataset = "baron4"
+
 n_neighbors = 15
 n_pcs = 50
 
 # # ---- SEARCH SPACE ----
 embedding_sizeL = [512]
-num_neuronsL = [64]
+num_neuronsL = [512]
 activationL = ["ReLU"]
 optimizerL = ["Adam"]
-seedL = [666]
+seedL = [42]
 wdL = [0.001]
 tau_rankL = [0.1]
 momentumL = [0.9]
@@ -37,7 +46,7 @@ max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
 gmcm_dimL = [16]
-epochs_clusteL = [50]
+epochs_clusteL = [1000]
 lr_clusterL = [0.001]
 # -----------------------
 
@@ -51,7 +60,6 @@ data,n_clusters= load_data(dataset, f'./data/{dataset}',n_neighbors,n_pcs)
 print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {n_clusters} clusters")
 print(check_sparse(data.x))
 print(f"The dataset is: {check_normalization(data.x)}")
-raise ValueError("Technical break")
 
 splitter = RandomLinkSplit(
     num_val=0.0,   

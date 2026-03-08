@@ -109,7 +109,7 @@ class GMCM_VGAE(nn.Module):
         self.gmcm = GMCM(n_components=self.nClusters, n_features=self.gmcm_dim,tau_rank=self.tau_rank).to(device)
 
         # Learnable weights
-        self.weights = LossWeights(alpha_init=alpha_init, beta_init=beta_init).to(device)
+        # self.weights = LossWeights(alpha_init=alpha_init, beta_init=beta_init).to(device)
 
     def Calculate_Loss(self, z, data, mu, theta, pi):
         # Edge reconstruction
@@ -128,7 +128,7 @@ class GMCM_VGAE(nn.Module):
 
         resp, gmcm_nll = self.gmcm(zc)
 
-        alpha, beta = self.weights()
+        alpha, beta = (1,1)
 
         total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
 
@@ -159,7 +159,7 @@ class GMCM_VGAE(nn.Module):
         self.zinb_decoder.train()
         self.projector.train()
         self.gmcm.train()
-        self.weights.train()
+        # self.weights.train()
 
         data=data.to(device)
         if optimizer == "Adam":
@@ -201,7 +201,7 @@ class GMCM_VGAE(nn.Module):
             self.zinb_decoder.train()
             self.projector.train()
             self.gmcm.train()
-            self.weights.train()
+            # self.weights.train()
 
             opti.zero_grad()
 
@@ -230,7 +230,7 @@ class GMCM_VGAE(nn.Module):
                     "zinb": {k: v.detach().cpu().clone() for k, v in self.zinb_decoder.state_dict().items()},
                     "proj": {k: v.detach().cpu().clone() for k, v in self.projector.state_dict().items()},
                     "gmcm": {k: v.detach().cpu().clone() for k, v in self.gmcm.state_dict().items()},
-                    "w": {k: v.detach().cpu().clone() for k, v in self.weights.state_dict().items()},
+                    # "w": {k: v.detach().cpu().clone() for k, v in self.weights.state_dict().items()},
                 }
                 torch.save(best_state, save_path + dataset + "/cluster/best_by_ari.pt")
 
@@ -251,7 +251,7 @@ class GMCM_VGAE(nn.Module):
             self.zinb_decoder.load_state_dict(best_state["zinb"])
             self.projector.load_state_dict(best_state["proj"])
             self.gmcm.load_state_dict(best_state["gmcm"])
-            self.weights.load_state_dict(best_state["w"])
+            # self.weights.load_state_dict(best_state["w"])
 
         torch.save(best_state, save_path + dataset + "/cluster/best_by_ari.pt")
         print(f"Best ARI={best_ari:.4f}")

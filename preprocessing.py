@@ -219,10 +219,27 @@ def to_pyg_data(adj, features, labels=None, make_undirected=False, add_self_loop
     data = Data(**data_kwargs)
     return data
 
-def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag=True):
-    num_classes=0
+
+
+def build_pyg_data(
+        adj,
+        features,
+        labels=None,
+        make_undirected=True,
+        remove_diag=True,
+        n_pcs=50,
+        n_hvg=2000,
+        target_sum=1e4
+):
+
+    num_classes = 0
+
+    # -------------------------
+    # adjacency processing
+    # -------------------------
     adj = sp.coo_matrix(adj)
     n, m = adj.shape
+
     if n != m:
         raise ValueError(f"adj must be square, got {adj.shape}")
 
@@ -235,19 +252,81 @@ def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag
     if make_undirected:
         edge_index = to_undirected(edge_index)
 
-    if sp.issparse(features):
-        x = torch.from_numpy(features.toarray()).float()
-    else:
-        x = torch.from_numpy(np.asarray(features)).float()
+    # -------------------------
+    # feature preprocessing
+    # -------------------------
+    if not sp.issparse(features):
+        features = sp.csr_matrix(features)
 
+    adata = ad.AnnData(features)
+
+    if labels is not None:
+        adata.obs["label"] = labels
+
+    # library size normalization
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+
+    # log transform
+    sc.pp.log1p(adata)
+
+    # highly variable genes
+    sc.pp.highly_variable_genes(adata, n_top_genes=min(n_hvg, adata.n_vars))
+    adata = adata[:, adata.var["highly_variable"]].copy()
+
+    # scaling
+    sc.pp.scale(adata, max_value=10)
+
+    # PCA representation
+    sc.pp.pca(adata, n_comps=min(n_pcs, adata.n_vars))
+
+    x = torch.tensor(adata.obsm["X_pca"], dtype=torch.float)
+
+    # -------------------------
+    # build PyG data object
+    # -------------------------
     data = Data(x=x, edge_index=edge_index)
 
     if labels is not None:
-        data.y = torch.from_numpy(np.asarray(labels)).long()
+        data.y = torch.tensor(np.asarray(labels), dtype=torch.long)
         num_classes = int(data.y.unique().numel())
 
+    return data, num_classes
 
-    return data,num_classes
+
+
+# def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag=True):
+#     num_classes=0
+#     adj = sp.coo_matrix(adj)
+#     n, m = adj.shape
+#     if n != m:
+#         raise ValueError(f"adj must be square, got {adj.shape}")
+#
+#     if remove_diag:
+#         adj = adj - sp.diags(adj.diagonal(), offsets=0, shape=adj.shape, format="coo")
+#         adj.eliminate_zeros()
+#
+#     edge_index, _ = from_scipy_sparse_matrix(adj)
+#
+#     if make_undirected:
+#         edge_index = to_undirected(edge_index)
+#
+#     if sp.issparse(features):
+#         x = torch.from_numpy(features.toarray()).float()
+#     else:
+#         x = torch.from_numpy(np.asarray(features)).float()
+#
+#     data = Data(x=x, edge_index=edge_index)
+#
+#     if labels is not None:
+#         data.y = torch.from_numpy(np.asarray(labels)).long()
+#         num_classes = int(data.y.unique().numel())
+#
+#
+#     return data,num_classes
+
+
+
+
 
 def get_pos_neg_edges(split_data):
     """
