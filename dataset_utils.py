@@ -8,6 +8,7 @@ import scanpy as sc
 import torch
 from torch_geometric.data import Data
 
+
 def read_rds(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"):
 
     # read expression matrix
@@ -98,74 +99,14 @@ def h5_xy_to_pyg(path, n_neighbors=15, n_pcs=50,excel_out="cluster_distribution.
 
     return data, n_clusters
 
-def h5_to_pyg(path, n_neighbors=15, n_pcs=50,excel_out="cluster_distribution.xlsx"):
-    """
-    Read Quake_Smart-seq2_Trachea.h5 and convert it to a PyTorch Geometric graph.
-
-    Parameters
-    ----------
-    path : str
-        Path to the HDF5 file.
-    n_neighbors : int
-        Number of neighbors used to build the KNN graph.
-    n_pcs : int
-        Number of principal components used for the graph.
-
-    Returns
-    -------
-    data : torch_geometric.data.Data
-        PyG graph object
-    adata : AnnData
-        AnnData object containing the processed dataset
-    """
-
-    # --- read file ---
-    with h5py.File(path, "r") as f:
-
-        grp = f["exprs"]
-
-        X = sp.csr_matrix(
-            (grp["data"][:], grp["indices"][:], grp["indptr"][:]),
-            shape=grp["shape"][:]
-        )
-
-        cells = f["obs_names"][:].astype(str)
-        genes = f["var_names"][:].astype(str)
-
-        y = f["obs"]["cluster"][:]
-
-    # --- build AnnData ---
-    adata = ad.AnnData(X)
-    adata.obs_names = cells
-    adata.var_names = genes
-    adata.obs["cluster"] = y
-
-    # --- Scanpy pipeline ---
-    sc.pp.pca(adata, n_comps=n_pcs)
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
-
-    # adjacency matrix
-    A = adata.obsp["connectivities"]
-
-    edge_index = np.vstack(A.nonzero())
-    edge_index = torch.tensor(edge_index, dtype=torch.long)
-
-    x = torch.tensor(adata.obsm["X_pca"], dtype=torch.float)
-    y = torch.tensor(adata.obs["cluster"].values)
-    n_clusters=save_cluster_distribution(y, excel_out)
-    data = Data(x=x, edge_index=edge_index, y=y)
-
-    print("Cells:", data.num_nodes)
-    print("Edges:", data.num_edges)
-    print("Clusters:", len(np.unique(y.numpy())))
-
-    return data, n_clusters
 
 def read_tsv(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"):
 
     # read expression matrix
     dataset = pd.read_csv(norm_filepath, sep='\t')
+
     dataset = dataset.T
+
     # read metadata
     label = pd.read_csv(meta_filepath, sep=',')
 
@@ -183,6 +124,7 @@ def read_tsv(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"
     cluster_col = "cell_type"
 
     # extract data
+    dataset = dataset.iloc[1:, :]
     X = dataset.to_numpy()
     y = label[cluster_col]
 
@@ -207,25 +149,160 @@ def read_tsv(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"
 
     print(f"Cluster distribution saved to: {excel_out}")
 
+
     return X, y,n_clusters
 
 
-def cell_matrix_to_graph(X, y, n_neighbors=15, n_pcs=50):
 
-    adata = sc.AnnData(X)
-    adata.obs["label"] = y
 
-    sc.pp.pca(adata, n_comps=n_pcs)
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
 
-    A = adata.obsp["connectivities"]
 
-    edge_index = torch.tensor(A.nonzero(), dtype=torch.long)
 
-    data = Data(
-        x=torch.tensor(X, dtype=torch.float),
-        edge_index=edge_index,
-        y=torch.tensor(y)
-    )
 
-    return data
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import torch
+from torch_geometric.data import Data
+from sklearn.preprocessing import LabelEncoder
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def build_pyg_graph(
+    cell_gene_matrix=None,          # np.ndarray or pd.DataFrame: shape (n_cells, n_genes)
+    cell_labels=None,               # array-like: length n_cells, categorical labels
+    n_top_genes: int = 2000,   # HVGs to select
+    n_neighbors: int = 15,     # kNN neighbors
+    n_pcs: int = 50,
+    file=None # PCs for neighbor graph
+) -> Data:
+    """
+    Build a PyTorch Geometric graph from a cell x gene matrix.
+
+    Pipeline:
+        Raw counts → QC → Log1p → Top-k HVGs → PCA → kNN Graph → PyG Data
+
+    Args:
+        cell_gene_matrix: Raw count matrix (cells × genes).
+        cell_labels:      Cell type / condition labels per cell.
+        n_top_genes:      Number of highly variable genes to keep.
+        n_neighbors:      k for kNN graph construction.
+        n_pcs:            Number of PCs used for neighbor computation.
+
+    Returns:
+        torch_geometric.data.Data with:
+            - x:          Node features (cells × HVGs), log-normalised
+            - edge_index: COO edge list from kNN graph  (2 × E)
+            - edge_attr:  Connectivities / weights       (E,)
+            - y:          Integer-encoded cell labels    (N,)
+    """
+
+    # ------------------------------------------------------------------ #
+    # 1. Build AnnData                                                     #
+    # ------------------------------------------------------------------ #
+    if file is not None:
+        with h5py.File(file, "r") as f:
+            X = f["X"][:]
+            y = f["Y"][:]
+
+        # build AnnData
+        adata = ad.AnnData(X)
+        adata.obs["label"] = y
+
+    else:
+        if isinstance(cell_gene_matrix, pd.DataFrame):
+            adata = sc.AnnData(X=cell_gene_matrix.values.astype(np.float32))
+            adata.var_names = cell_gene_matrix.columns.astype(str)
+            adata.obs_names = cell_gene_matrix.index.astype(str)
+        else:
+            adata = sc.AnnData(X=cell_gene_matrix.astype(np.float32))
+
+        adata.obs["label"] = np.array(cell_labels)
+        print(f"[1] Input:  {adata.n_obs} cells × {adata.n_vars} genes")
+
+    # ------------------------------------------------------------------ #
+    # 2. QC filtering                                                      #
+    # ------------------------------------------------------------------ #
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    print(f"[2] Post-QC: {adata.n_obs} cells × {adata.n_vars} genes")
+
+    # ------------------------------------------------------------------ #
+    # 3. Normalise & log-transform                                         #
+    # ------------------------------------------------------------------ #
+    sc.pp.normalize_total(adata, target_sum=1e4)   # library-size normalisation
+    sc.pp.log1p(adata)                              # log(x + 1)
+
+    # ------------------------------------------------------------------ #
+    # 4. Highly variable genes                                             #
+    # ------------------------------------------------------------------ #
+    actual_hvg = min(n_top_genes, adata.n_vars)
+    sc.pp.highly_variable_genes(adata, n_top_genes=actual_hvg)
+    adata = adata[:, adata.var["highly_variable"]]
+    print(f"[4] HVGs selected: {adata.n_vars}")
+
+    # ------------------------------------------------------------------ #
+    # 5. PCA + kNN graph                                                   #
+    # ------------------------------------------------------------------ #
+    # sc.pp.scale(adata, max_value=10,zero_center=True)  #Scale
+    actual_pcs = min(n_pcs, adata.n_obs - 1, adata.n_vars - 1)
+    sc.pp.pca(adata, n_comps=actual_pcs)
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=actual_pcs)
+    print(f"[5] kNN graph built (k={n_neighbors}, pcs={actual_pcs})")
+
+    # ------------------------------------------------------------------ #
+    # 6. Extract node features                                             #
+    # ------------------------------------------------------------------ #
+    X_mat = adata.X
+    if hasattr(X_mat, "toarray"):          # sparse → dense
+        X_mat = X_mat.toarray()      #.     mat = adata.X.toarray() if issparse(adata.X) else adata.X
+    x = torch.tensor(X_mat, dtype=torch.float)
+
+    # ------------------------------------------------------------------ #
+    # 7. Extract edges from kNN connectivities (COO format)               #
+    # ------------------------------------------------------------------ #
+    conn = adata.obsp["connectivities"]   # sparse (N × N)
+    cx = conn.tocoo()
+
+    row = torch.tensor(cx.row, dtype=torch.long)
+    col = torch.tensor(cx.col, dtype=torch.long)
+    edge_index = torch.stack([row, col], dim=0)          # (2, E)
+    edge_attr  = torch.tensor(cx.data, dtype=torch.float) # (E,)
+
+    # ------------------------------------------------------------------ #
+    # 8. Encode labels                                                     #
+    # ------------------------------------------------------------------ #
+    le = LabelEncoder()
+    y_int = le.fit_transform(adata.obs["label"].values)
+    y = torch.tensor(y_int, dtype=torch.long)
+
+    # ------------------------------------------------------------------ #
+    # 9. Assemble PyG Data object                                          #
+    # ------------------------------------------------------------------ #
+    n_clusters = len(le.classes_)
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+    data.label_encoder = le                # attach for decoding later
+    data.num_classes   = len(le.classes_)
+
+    print(f"\n── PyG Graph Summary ──────────────────────")
+    print(f"  Nodes (cells) : {data.num_nodes}")
+    print(f"  Node features : {data.num_node_features}  (HVGs)")
+    print(f"  Edges         : {data.num_edges}")
+    print(f"  Classes       : {data.num_classes}  → {list(le.classes_)}")
+    print(f"───────────────────────────────────────────")
+
+    return data,n_clusters

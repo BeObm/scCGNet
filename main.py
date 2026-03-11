@@ -1,49 +1,47 @@
 import os
-from preprocessing import to_pyg_data,build_pyg_data
 from toolz.tests.test_dicttoolz import defaultdict
 from torch_geometric.transforms import RandomLinkSplit
-from preprocessing import get_device
 os.environ["OMP_NUM_THREADS"] = "15"
 import warnings
 warnings.filterwarnings("ignore")
-
-import numpy as np
 import torch
-import scipy.sparse as sp
-from model import GMCM_VGAE
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph
 import time
 import itertools
 import pandas as pd
+from preprocessing import get_device,load_data
+from model import GMCM_VGAE
 
 save_path = "./results/"
-dataset = "YAN"
+dataset = "Klein"
 n_neighbors = 15
 n_pcs = 50
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [512,1024]
-num_neuronsL = [32,64]
+embedding_sizeL = [512,1024,128]
+num_neuronsL = [32,64,128,256]
 activationL = ["ReLU","Tanh"]
 optimizerL = ["Adam","SGD"]
-seedL = [8]
-wdL = [0.001]
+seedL = [8,42]
+wdL = [0.001,0.0001]
 tau_rankL = [0.1]
 momentumL = [0.9]
 min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [16,32,64,128]
-epochs_clusteL = [50]
-lr_clusterL = [0.01,0.001,0.005]
+gmcm_dimL = [32,64,128,256,512]
+epochs_clusteL = [300,850,1000]
+lr_clusterL = [0.01,0.001,0.0001]
 # -----------------------
 
 
 device = get_device()
 
-data,n_clusters= load_data(dataset, f'./data/{dataset}',n_neighbors,n_pcs)
-
+data,n_clusters= load_data(dataset=dataset,
+                           data_path=f'./data/{dataset}',
+                           n_top_genes=2000,
+                           n_neighbors=n_neighbors,
+                           n_pcs=n_pcs)
 
 
 
@@ -157,7 +155,7 @@ for combo in grid:
             max_clamp_mean=max_clamp_mean
         ).to(device)
 
-        ari, nmi, acc  = network.train(
+        ari, nmi, acc  = network.train_model(
             train_data,
             optimizer=optimizer,
             epochs=epochs_cluster,

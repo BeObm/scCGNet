@@ -32,7 +32,7 @@ def parse_index_file(filename):
     return index
 
 
-def load_data(dataset, data_path,n_neighbors,n_pcs):
+def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
     if dataset in ["baron3","baron4"]:
         adj, features, labels_int = load_data1(dataset, data_path)
         data, n_clusters = build_pyg_data(adj, features, labels_int)
@@ -41,25 +41,27 @@ def load_data(dataset, data_path,n_neighbors,n_pcs):
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
                                     f"{data_path}/cluster_distribution.xlsx")
-        data = cell_matrix_to_graph(X, y, n_neighbors, n_pcs)
+        data, n_clusters = build_pyg_graph(cell_gene_matrix=X, cell_labels= y,
+                               n_top_genes=n_top_genes,
+                               n_neighbors=n_neighbors,
+                               n_pcs=n_pcs)
 
     elif dataset in ["facs_lung", "droplet_lung"]:
         X,y,n_clusters = read_rds(f"{data_path}/{dataset}_norm.rds",
                       f"{data_path}/{dataset}_meta.rds",
                                   f"{data_path}/cluster_distribution.xlsx")
-        data = cell_matrix_to_graph(X,y,n_neighbors,n_pcs)
+        data,n_clusters = build_pyg_graph(cell_gene_matrix=X, cell_labels= y,
+                               n_top_genes=n_top_genes,
+                               n_neighbors=n_neighbors,
+                               n_pcs=n_pcs,
+                               file=None)
 
-    elif dataset in ["10X_PMBC", "human_kidney","Mouse","mouse_ES","worm_neuron"]:   #  These dataset have raw count data
-        data,n_clusters = h5_xy_to_pyg(path=f"{data_path}/{dataset}.h5",
-                                       n_neighbors=n_neighbors,
-                                       n_pcs=n_pcs,
-                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
-    elif dataset in ["Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea"]:
-        data,n_clusters = h5_to_pyg(path=f"{data_path}/{dataset}.h5",
-                                       n_neighbors=n_neighbors,
-                                       n_pcs=n_pcs,
-                                       excel_out=f"{data_path}/cluster_distribution.xlsx")
-        
+    elif dataset in ["10X_PMBC", "human_kidney","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea"]:   #  These dataset have raw count data
+        data,n_clusters = build_pyg_graph(cell_gene_matrix=None, cell_labels=None,
+                               n_top_genes=n_top_genes,
+                               n_neighbors=n_neighbors,
+                               n_pcs=n_pcs,
+                               file=f"{data_path}/{dataset}.h5")
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
     return data, n_clusters
