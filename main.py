@@ -17,21 +17,21 @@ n_neighbors = 15
 n_pcs = 50
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [512,1024,128]
-num_neuronsL = [32,64,128,256]
-activationL = ["ReLU","Tanh"]
-optimizerL = ["Adam","SGD"]
-seedL = [8,42]
-wdL = [0.001,0.0001]
+embedding_sizeL = [512]
+num_neuronsL = [128,264]
+activationL = ["Tanh","ReLU"]
+optimizerL = ["Adam"]
+seedL = [8]
+wdL = [0.001]
 tau_rankL = [0.1]
 momentumL = [0.9]
 min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [32,64,128,256,512]
-epochs_clusteL = [300,850,1000]
-lr_clusterL = [0.01,0.001,0.0001]
+gmcm_dimL = [32,64]
+epochs_clusteL = [800,1200]
+lr_clusterL = [0.0001]
 # -----------------------
 
 

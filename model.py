@@ -193,11 +193,7 @@ class GMCM_VGAE(nn.Module):
                 }
                 torch.save(best_state,
                            save_path + dataset + "/cluster/best_by_ari.pt")
-            else:
-                bad_epochs += 1
-                if bad_epochs >= patience:
-                    print(f"Early stopping at epoch {epoch+1}")
-                    break
+
 
             logwriter.writerow({'iter': epoch+1, 'ari': ari, 'nmi': nmi,
                                  'Loss_total': Loss_total.item()})
