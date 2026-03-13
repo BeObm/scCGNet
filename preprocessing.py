@@ -1,20 +1,15 @@
-import torch
-import numpy as np
+
 import pickle as pkl
 import networkx as nx
-import scipy.sparse as sp
-from sklearn.cluster.tests.test_k_means import n_clusters
-from torch_geometric.data import Data
 from torch_geometric.utils import from_scipy_sparse_matrix, to_undirected
 import torch
-import h5py
+import scipy.sparse as sp
 from torch.utils.data import Dataset
 import os
 from sklearn.model_selection import train_test_split
-import pandas as pd
-import scanpy as sc
 from sklearn.preprocessing import minmax_scale
 from dataset_utils import *
+
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
 def parse_index_file(filename):
@@ -56,12 +51,15 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
                                n_pcs=n_pcs,
                                file=None)
 
-    elif dataset in ["10X_PMBC", "human_kidney","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea"]:   #  These dataset have raw count data
+    elif dataset in ["10X_PMBC", "human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]:   #  These dataset have raw count data
         data,n_clusters = build_pyg_graph(cell_gene_matrix=None, cell_labels=None,
                                n_top_genes=n_top_genes,
                                n_neighbors=n_neighbors,
                                n_pcs=n_pcs,
                                file=f"{data_path}/{dataset}.h5")
+    elif dataset in ["Campell"]:
+        x,y=load_campell(data_path)
+        data, n_clusters = build_pyg_graph(cell_gene_matrix=x, cell_labels=y)
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
     return data, n_clusters
@@ -181,7 +179,7 @@ def get_device():
         device = torch.device("cpu")
         print("Using CPU")
 
-    return device
+    return torch.device("cpu")  # Just
 
 
 

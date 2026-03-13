@@ -1,197 +1,186 @@
+
 import os
-from toolz.tests.test_dicttoolz import defaultdict
-from torch_geometric.transforms import RandomLinkSplit
-os.environ["OMP_NUM_THREADS"] = "15"
-import warnings
-warnings.filterwarnings("ignore")
-import torch
+import argparse
 import time
-import itertools
+import warnings
+import torch
 import pandas as pd
-from preprocessing import get_device,load_data
+from torch_geometric.transforms import RandomLinkSplit
+from preprocessing import get_device, load_data
 from model import GMCM_VGAE
-
-save_path = "./results/"
-dataset = "Klein"
-n_neighbors = 15
-n_pcs = 50
-
-# # ---- SEARCH SPACE ----
-embedding_sizeL = [512]
-num_neuronsL = [128,264]
-activationL = ["Tanh","ReLU"]
-optimizerL = ["Adam"]
-seedL = [8]
-wdL = [0.001]
-tau_rankL = [0.1]
-momentumL = [0.9]
-min_clamp_meanL = [1e-5]
-max_clamp_meanL = [1e6]
-min_clamp_disL = [1e-4]
-max_clamp_disL = [1e4]
-gmcm_dimL = [32,64]
-epochs_clusteL = [800,1200]
-lr_clusterL = [0.0001]
-# -----------------------
-
-
-device = get_device()
-
-data,n_clusters= load_data(dataset=dataset,
-                           data_path=f'./data/{dataset}',
-                           n_top_genes=2000,
-                           n_neighbors=n_neighbors,
-                           n_pcs=n_pcs)
+warnings.filterwarnings("ignore")
+os.environ["OMP_NUM_THREADS"] = "15"
 
 
 
-print(f"The dataset has {data.num_nodes} nodes, {data.x.shape[1]} feature, {data.num_edges} edges and {n_clusters} clusters")
-splitter = RandomLinkSplit(
-    num_val=0.0,
-    num_test=0.0,
-    is_undirected=True,
-    add_negative_train_samples=True,
-    neg_sampling_ratio=1.0,
-)
-train_data, val_data, test_data = splitter(data)
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Train GMCM-VGAE for scRNA-seq clustering.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
-print("Start grid search")
-start = time.perf_counter()
-results = defaultdict(list)
-total_configs = 1
+    # ── Data ──────────────────────────────────────────────────────────────
+    p.add_argument("--dataset",      type=str,   default="Quake_Smart-seq2_Diaphragm",
+                   help="Dataset name (must match a folder under --data_path).")
+    p.add_argument("--data_path",    type=str,   default=None,
+                   help="Path to data folder. Defaults to ./data/<dataset>.")
+    p.add_argument("--n_top_genes",  type=int,   default=1200,
+                   help="Number of highly variable genes to select.")
+    p.add_argument("--n_neighbors",  type=int,   default=5,
+                   help="k for kNN graph construction.")
+    p.add_argument("--n_pcs",        type=int,   default=15,
+                   help="Number of PCs used for neighbor graph.")
+    p.add_argument("--save_path",    type=str,   default="./results/",
+                   help="Root directory for saving results and checkpoints.")
 
-grid = itertools.product(
-    embedding_sizeL,
-    num_neuronsL,
-    activationL,
-    optimizerL,
-    seedL,
-    wdL,
-    tau_rankL,
-    momentumL,
-    min_clamp_meanL,
-    max_clamp_meanL,
-    min_clamp_disL,
-    max_clamp_disL,
-    epochs_clusteL,
-    lr_clusterL,
-    gmcm_dimL
-)
-total_configs = (
-    len(embedding_sizeL)
-    * len(num_neuronsL)
-    * len(activationL)
-    * len(optimizerL)
-    * len(seedL)
-    * len(wdL)
-    * len(momentumL)
-    * len(tau_rankL)
-    * len(min_clamp_meanL)
-    * len(max_clamp_meanL)
-    * len(min_clamp_disL)
-    * len(max_clamp_disL)
-    * len(epochs_clusteL)
-    * len(lr_clusterL)
-    * len(gmcm_dimL)
-)
+    # ── Model architecture ────────────────────────────────────────────────
+    p.add_argument("--embedding_size",  type=int,   default=512,
+                   help="Dimensionality of the latent space z.")
+    p.add_argument("--num_neurons",     type=int,   default=128,
+                   help="Hidden size of the GCN encoder layer.")
+    p.add_argument("--gmcm_dim",        type=int,   default=32,
+                   help="Projection dimension for the GMCM copula (must be >= 2).")
+    p.add_argument("--activation",      type=str,   default="Tanh",
+                   choices=["ReLU", "Sigmoid", "Tanh", "Linear"],
+                   help="Encoder activation function.")
+    p.add_argument("--min_clamp_mean",  type=float, default=1e-5)
+    p.add_argument("--max_clamp_mean",  type=float, default=1e6)
+    p.add_argument("--min_clamp_dis",   type=float, default=1e-4)
+    p.add_argument("--max_clamp_dis",   type=float, default=1e4)
 
-print("Total number of configurations:", total_configs)
+    # ── Training ──────────────────────────────────────────────────────────
+    p.add_argument("--epochs",      type=int,   default=800,
+                   help="Maximum number of joint training epochs.")
+    p.add_argument("--lr",          type=float, default=1e-4,
+                   help="Learning rate.")
+    p.add_argument("--wd",          type=float, default=1e-3,
+                   help="Weight decay (L2 regularisation).")
+    p.add_argument("--momentum",    type=float, default=0.9,
+                   help="Momentum (used only with SGD / RMSProp).")
+    p.add_argument("--optimizer",   type=str,   default="Adam",
+                   choices=["Adam", "SGD", "RMSProp"],
+                   help="Optimiser.")
+    p.add_argument("--tau_rank",    type=float, default=0.1,
+                   help="Temperature for soft-rank copula transform.")
+    p.add_argument("--seed",        type=int,   default=8,
+                   help="Random seed for reproducibility.")
 
-i=1
-for combo in grid:
+    return p.parse_args()
 
-    # try:
-        (embedding_size,
-         num_neurons,
-         activation,
-         optimizer,
-         seed,
-         wd,
-         tau_rank,
-         momentum,
-         min_clamp_mean,
-         max_clamp_mean,
-         min_clamp_dis,
-         max_clamp_dis,
-         epochs_cluster,
-         lr_cluster,
-         gmcm_dim) = combo
 
-        config = {
-            "embedding_size": embedding_size,
-            "num_neurons": num_neurons,
-            "activation": activation,
-            "optimizer": optimizer,
-            "seed": seed,
-            "wd": wd,
-            "tau_rank": tau_rank,
-            "momentum": momentum,
-            "min_clamp_mean": min_clamp_mean,
-            "max_clamp_mean": max_clamp_mean,
-            "min_clamp_dis": min_clamp_dis,
-            "max_clamp_dis": max_clamp_dis,
-            "epochs_cluster": epochs_cluster,
-            "lr_cluster": lr_cluster,
-            "gmcm_dim":gmcm_dim
-        }
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-        torch.manual_seed(seed)
-        run_start = time.perf_counter()
-        print(f"\n ###{i} -- Training with: {config}")
-        i+=1
-        network = GMCM_VGAE(
-            data=train_data,
-            num_neurons=num_neurons,
-            gmcm_dim=gmcm_dim,
-            num_features=data.x.shape[1],
-            embedding_size=embedding_size,
-            nClusters=n_clusters,
-            activation=activation,
-            tau_rank=tau_rank,
-            seed=seed,
-            min_clamp_dis=min_clamp_dis,
-            max_clamp_dis=max_clamp_dis,
-            min_clamp_mean=min_clamp_mean,
-            max_clamp_mean=max_clamp_mean
-        ).to(device)
+def main():
+    args   = parse_args()
 
-        ari, nmi, acc  = network.train_model(
-            train_data,
-            optimizer=optimizer,
-            epochs=epochs_cluster,
-            lr=lr_cluster,
-            wd=wd,
-            momentum=momentum,
-            save_path=save_path,
-            dataset=dataset
-        )
-        print(f"Training results: Acc={acc} | ARI={ari}, NMI={nmi}")
 
-        run_time = time.perf_counter() - run_start
-        results["ACC"].append(acc)
-        results["ARI"].append(ari)
-        results["NMI"].append(nmi)
-        for k,v in config.items():
-            results[k].append(v)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-    # except:
-    #     print(f"Error with config: {i}")
-    #     results["ACC"].append(0)
-    #     results["ARI"].append(0)
-    #     results["NMI"].append(0)
-    #     for k, v in config.items():
-    #         results[k].append(v)
-    #         if torch.cuda.is_available():
-    #             torch.cuda.empty_cache()
-    #     continue
-end = time.perf_counter()
+    device = get_device()
+    print(f"Code running on device: {device} using {args.dataset} dataset")
+    # Seed everything
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
-print(f"Total grid time: {end - start:0.4f} seconds")
+    # ── Data loading ──────────────────────────────────────────────────────
+    data_path = f"./data/{args.dataset}"
 
-df = pd.DataFrame(results)
-df.to_excel("grid_search_results.xlsx")
+    print(f"\n{'='*9}")
+    print(f"  Dataset  : {args.dataset}")
+    print(f"  Data path: {data_path}")
+    print(f"{'='*9}\n")
 
-print("Saved to grid_search_results.xlsx")
-print(df.head())
+    data, n_clusters = load_data(
+        dataset=args.dataset,
+        data_path=data_path,
+        n_top_genes=args.n_top_genes,
+        n_neighbors=args.n_neighbors,
+        n_pcs=args.n_pcs,
+    )
 
+    print(
+        f"\nGraph: {data.num_nodes} nodes | "
+        f"{data.x.shape[1]} features | "
+        f"{data.num_edges} edges | "
+        f"{n_clusters} clusters\n"
+    )
+
+    # ── Train / val / test split (link prediction split for VGAE) ─────────
+    splitter = RandomLinkSplit(
+        num_val=0.0,
+        num_test=0.0,
+        is_undirected=True,
+        add_negative_train_samples=True,
+        neg_sampling_ratio=1.0,
+    )
+    train_data, _, _ = splitter(data)
+
+    # ── Model ─────────────────────────────────────────────────────────────
+    print(f"{'='*55}")
+    print(f"  Config")
+    print(f"{'='*55}")
+    for k, v in vars(args).items():
+        print(f"  {k:<20} : {v}")
+    print(f"{'='*55}\n")
+
+
+
+    network = GMCM_VGAE(
+        num_neurons=args.num_neurons,
+        gmcm_dim=args.gmcm_dim,
+        num_features=data.x.shape[1],
+        embedding_size=args.embedding_size,
+        nClusters=n_clusters,
+        activation=args.activation,
+        tau_rank=args.tau_rank,
+        seed=args.seed,
+        min_clamp_dis=args.min_clamp_dis,
+        max_clamp_dis=args.max_clamp_dis,
+        min_clamp_mean=args.min_clamp_mean,
+        max_clamp_mean=args.max_clamp_mean,
+    ).to(device)
+
+    # ── Training ──────────────────────────────────────────────────────────
+    start = time.perf_counter()
+
+    ari, nmi, acc = network.train_model(
+        train_data,
+        optimizer=args.optimizer,
+        epochs=args.epochs,
+        lr=args.lr,
+        wd=args.wd,
+        momentum=args.momentum,
+        save_path=args.save_path,
+        dataset=args.dataset,
+    )
+
+    elapsed = time.perf_counter() - start
+
+    # ── Results ───────────────────────────────────────────────────────────
+    print(f"\n{'='*55}")
+    print(f"  Results")
+    print(f"{'='*55}")
+    print(f"  ARI  : {ari:.4f}")
+    print(f"  NMI  : {nmi:.4f}")
+    print(f"  ACC  : {acc:.4f}")
+    print(f"  Time : {elapsed:.1f}s")
+    print(f"{'='*55}\n")
+
+    # Save results to CSV
+    os.makedirs(args.save_path, exist_ok=True)
+    results = {**vars(args), "ARI": ari, "NMI": nmi, "ACC": acc,
+               "time_s": round(elapsed, 2)}
+    df = pd.DataFrame([results])
+
+    out_csv = os.path.join(args.save_path, f"{args.dataset}_results.csv")
+
+    # Append if file exists, write header only if new
+    write_header = not os.path.exists(out_csv)
+    df.to_csv(out_csv, mode='a', header=write_header, index=False)
+    print(f"Results saved to {out_csv}")
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+if __name__ == "__main__":
+    main()

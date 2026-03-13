@@ -2,11 +2,12 @@ import pyreadr
 import numpy as np
 import pandas as pd
 import h5py
-import scipy.sparse as sp
 import anndata as ad
 import scanpy as sc
 import torch
 from torch_geometric.data import Data
+from sklearn.preprocessing import LabelEncoder
+from scipy.sparse import csr_matrix
 
 
 def read_rds(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"):
@@ -153,34 +154,25 @@ def read_tsv(norm_filepath, meta_filepath, excel_out="cluster_distribution.xlsx"
     return X, y,n_clusters
 
 
+def load_campell(data_path):
+    label_data=pd.read_csv(f"{data_path}/GSE93374_cell_metadata.txt", sep="\t")
+    data=pd.read_csv(f"{data_path}/GSE93374_Merged_all_020816_DGE.txt", sep="\t")
 
+    label_name=[]
+    labels=[]
+    for i,col  in enumerate(data.columns):
+        label_name.append(label_data.loc[label_data["1.ID"] == col,"1.ID"].iloc[0])
+        labels.append(label_data.loc[label_data["1.ID"] == col,"2.group"].iloc[0])
 
+    if set(data.columns)== set(label_name):
+        for i,col  in enumerate(data.columns):
+            if col != label_name[i]:
+                raise ValueError("Mismatch in cell ID. Check file structure")
+    elif set(data.columns) != set(label_name):
+         raise ValueError("Mismatch in cell ID")
 
-
-
-
-import numpy as np
-import pandas as pd
-import scanpy as sc
-import torch
-from torch_geometric.data import Data
-from sklearn.preprocessing import LabelEncoder
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    X = data.T
+    return X, labels
 
 def build_pyg_graph(
     cell_gene_matrix=None,          # np.ndarray or pd.DataFrame: shape (n_cells, n_genes)
@@ -306,3 +298,28 @@ def build_pyg_graph(
     print(f"───────────────────────────────────────────")
 
     return data,n_clusters
+
+
+
+def extract_graph_components(data):
+    N = data.num_nodes
+
+    row     = data.edge_index[0].cpu().numpy()
+    col     = data.edge_index[1].cpu().numpy()
+    weights = (data.edge_attr.cpu().numpy()
+               if data.edge_attr is not None
+               else np.ones(len(row), dtype=np.float32))
+
+    # Return sparse instead of dense — supports eliminate_zeros() and saves memory
+    A = csr_matrix((weights, (row, col)), shape=(N, N))
+
+    X = data.x.cpu().numpy()
+    y = data.y.cpu().numpy()
+
+    print(f"── Graph Components ────────────────────────")
+    print(f"  A  (adjacency) : {A.shape}  nnz={A.nnz}")
+    print(f"  X  (features)  : {X.shape}")
+    print(f"  y  (labels)    : {y.shape}  classes={np.unique(y).tolist()}")
+    print(f"────────────────────────────────────────────")
+
+    return A, X, y
