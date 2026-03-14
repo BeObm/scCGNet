@@ -2,11 +2,12 @@ import os
 os.environ["OMP_NUM_THREADS"] = "15"
 import warnings
 warnings.filterwarnings("ignore")
-from scipy.sparse import csr_matrix
+import numpy as np
+import torch
 import scipy.sparse as sp
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph, get_device
+from model_old import GMCM_VGAE
+from preprocessing import load_data, sparse_to_tuple, preprocess_graph
 import time
-from dataset_utils import extract_graph_components
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -20,13 +21,18 @@ from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 
 device = get_device()
-dataset = "Quake_Smart-seq2_Diaphragm"
-epochs_cluster = 350
+dataset = "baron4"
+epochs_cluster = 800
 lr_cluster = 0.01
-embedding_size = 45
-num_neurons = 90
+embedding_size = 64
+num_neurons = 256
 activation = "Sigmoid"
-seed = 42
+seed = 8
+
+
+# Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
+device = torch.device('cpu')
+
 
 class GraphConvSparse(nn.Module):
     def __init__(self, seed, input_dim, output_dim, adj, activation=torch.sigmoid, **kwargs):
@@ -199,8 +205,6 @@ class GMCM_VGAE(nn.Module):
         import csv, os
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-
-        os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
 
         # Logging the resluts
         logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
@@ -380,6 +384,8 @@ class clustering_metrics():
         return acc, nmi, adjscore
 
 
+
+
 def main():
     save_path = "./results/"
 
@@ -395,7 +401,7 @@ def main():
 
     data, nClusters = load_data(dataset=dataset,
                                  data_path=f'./data/{dataset}',
-                                 n_top_genes=2000,
+                                 n_top_genes=1200,
                                  n_neighbors=5,
                                  n_pcs=50)
 
