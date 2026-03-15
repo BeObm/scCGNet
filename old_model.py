@@ -5,7 +5,6 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import torch
 import scipy.sparse as sp
-from model_old import GMCM_VGAE
 from preprocessing import load_data, sparse_to_tuple, preprocess_graph
 import time
 import torch
@@ -21,7 +20,7 @@ from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 
 device = get_device()
-dataset = "baron4"
+dataset = "Klein"
 epochs_cluster = 800
 lr_cluster = 0.01
 embedding_size = 64
