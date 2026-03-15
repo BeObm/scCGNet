@@ -40,7 +40,7 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
                                n_top_genes=n_top_genes,
                                n_neighbors=n_neighbors,
                                n_pcs=n_pcs)
-
+        return data, n_clusters
     elif dataset in ["facs_lung", "droplet_lung"]:
         X,y,n_clusters = read_rds(f"{data_path}/{dataset}_norm.rds",
                       f"{data_path}/{dataset}_meta.rds",

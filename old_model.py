@@ -21,11 +21,7 @@ from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
 device = get_device()
-<<<<<<< Updated upstream
 dataset = "Klein"
-=======
-dataset = "Chung"
->>>>>>> Stashed changes
 epochs_cluster = 800
 lr_cluster = 0.01
 embedding_size = 64
@@ -209,7 +205,7 @@ class GMCM_VGAE(nn.Module):
         import csv, os
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-
+        os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
         # Logging the resluts
         logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
         logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
