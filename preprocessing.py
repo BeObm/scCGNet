@@ -31,8 +31,8 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
     if dataset in ["baron3","baron4"]:
         adj, features, labels_int = load_data1(dataset, data_path)
         data, n_clusters = build_pyg_data(adj, features, labels_int)
-
-    elif dataset in ["Klein", "Chung","YAN"]:
+        return adj, features, labels_int,n_clusters
+    if dataset in ["Klein", "Chung","YAN"]:
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
                                     f"{data_path}/cluster_distribution.xlsx")
@@ -50,6 +50,7 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
                                n_neighbors=n_neighbors,
                                n_pcs=n_pcs,
                                file=None)
+        return data,n_clusters
 
     elif dataset in ["10X_PMBC", "human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]:   #  These dataset have raw count data
         data,n_clusters = build_pyg_graph(cell_gene_matrix=None, cell_labels=None,
@@ -57,12 +58,13 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
                                n_neighbors=n_neighbors,
                                n_pcs=n_pcs,
                                file=f"{data_path}/{dataset}.h5")
+        return data, n_clusters
     elif dataset in ["Campell"]:
         x,y=load_campell(data_path)
         data, n_clusters = build_pyg_graph(cell_gene_matrix=x, cell_labels=y)
+        return data, n_clusters
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
-    return data, n_clusters
 
 def load_data1(dataset, data_path, modified=True):
     """Load the data

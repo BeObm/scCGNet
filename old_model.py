@@ -18,9 +18,14 @@ from sklearn import metrics
 from sklearn.metrics.cluster import adjusted_rand_score
 from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
+from preprocessing import *
 
 device = get_device()
+<<<<<<< Updated upstream
 dataset = "Klein"
+=======
+dataset = "Chung"
+>>>>>>> Stashed changes
 epochs_cluster = 800
 lr_cluster = 0.01
 embedding_size = 64
@@ -397,14 +402,19 @@ def main():
     min_clamp_dis = 1e-4
     max_clamp_dis = 1e4
 
-
-    data, nClusters = load_data(dataset=dataset,
-                                 data_path=f'./data/{dataset}',
-                                 n_top_genes=1200,
-                                 n_neighbors=5,
-                                 n_pcs=50)
-
-    A, X, labels = extract_graph_components(data)
+    if dataset in ["baron3", "baron4"]:
+        A, X, labels,nClusters  = load_data(dataset=dataset,
+                                     data_path=f'./data/{dataset}',
+                                     n_top_genes=1200,
+                                     n_neighbors=5,
+                                     n_pcs=50)
+    else:
+      data,nClusters = load_data(dataset=dataset,
+                                     data_path=f'./data/{dataset}',
+                                     n_top_genes=1200,
+                                     n_neighbors=5,
+                                     n_pcs=50)
+      A, X, labels = extract_graph_components(data)
     adj = csr_matrix(A) if not hasattr(A, 'eliminate_zeros') else A
     features = csr_matrix(X)
 
