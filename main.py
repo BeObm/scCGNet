@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # ── Data ──────────────────────────────────────────────────────────────
+    # ── Data ───
     p.add_argument("--dataset",      type=str,   default="Quake_Smart-seq2_Diaphragm",
                    help="Dataset name (must match a folder under --data_path).")
     p.add_argument("--data_path",    type=str,   default=None,
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_clamp_dis",   type=float, default=1e4)
 
     # ── Training ──────────────────────────────────────────────────────────
-    p.add_argument("--epochs",      type=int,   default=800,
+    p.add_argument("--epochs",      type=int,   default=350,
                    help="Maximum number of joint training epochs.")
     p.add_argument("--lr",          type=float, default=1e-4,
                    help="Learning rate.")
@@ -68,7 +68,6 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args   = parse_args()
@@ -81,7 +80,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
-    # ── Data loading ──────────────────────────────────────────────────────
+    
     data_path = f"./data/{args.dataset}"
 
     print(f"\n{'='*9}")
@@ -104,7 +103,6 @@ def main():
         f"{n_clusters} clusters\n"
     )
 
-    # ── Train / val / test split (link prediction split for VGAE) ─────────
     splitter = RandomLinkSplit(
         num_val=0.0,
         num_test=0.0,
@@ -114,7 +112,7 @@ def main():
     )
     train_data, _, _ = splitter(data)
 
-    # ── Model ─────────────────────────────────────────────────────────────
+    
     print(f"{'='*55}")
     print(f"  Config")
     print(f"{'='*55}")
@@ -139,7 +137,7 @@ def main():
         max_clamp_mean=args.max_clamp_mean,
     ).to(device)
 
-    # ── Training ──────────────────────────────────────────────────────────
+    # ── Training 
     start = time.perf_counter()
 
     ari, nmi, acc = network.train_model(
@@ -155,7 +153,7 @@ def main():
 
     elapsed = time.perf_counter() - start
 
-    # ── Results ───────────────────────────────────────────────────────────
+    # ── Results 
     print(f"\n{'='*55}")
     print(f"  Results")
     print(f"{'='*55}")

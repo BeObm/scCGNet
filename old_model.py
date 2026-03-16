@@ -21,13 +21,13 @@ from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
 device = get_device()
-dataset = "Klein"
-epochs_cluster = 800
-lr_cluster = 0.01
-embedding_size = 64
-num_neurons = 256
-activation = "Sigmoid"
-seed = 8
+dataset = "worm_neuron"
+epochs_cluster = 350
+lr_cluster = 0.001
+embedding_size = 32
+num_neurons = 64
+activation = "ReLU"
+seed = 82
 
 
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
@@ -401,16 +401,23 @@ def main():
     if dataset in ["baron3", "baron4"]:
         A, X, labels,nClusters  = load_data(dataset=dataset,
                                      data_path=f'./data/{dataset}',
-                                     n_top_genes=1200,
+                                     n_top_genes=2000,
                                      n_neighbors=5,
                                      n_pcs=50)
     else:
       data,nClusters = load_data(dataset=dataset,
                                      data_path=f'./data/{dataset}',
-                                     n_top_genes=1200,
+                                     n_top_genes=2000,
                                      n_neighbors=5,
                                      n_pcs=50)
       A, X, labels = extract_graph_components(data)
+    # data_dic, adata = load_h5_data(f'./dataset/{dataset}.h5ad')
+    # A=data_dic['adj']
+    # features=data_dic['features']
+    # labels=data_dic['label']
+    # nClusters = data_dic['n_classes']
+    # edge_index=data_dic['edge_index']
+    print(f"The dataset has {A.shape[0]} cells, {A.shape[1]} genes and {nClusters} clusters")
     adj = csr_matrix(A) if not hasattr(A, 'eliminate_zeros') else A
     features = csr_matrix(X)
 
@@ -455,7 +462,7 @@ def main():
     end = time.perf_counter()
 
     print(f"Total time: {end - start:0.4f} seconds")
-    print(f"Training results: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
+    print(f"Training results for {dataset} dataset: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
 
 
 if __name__ == '__main__':

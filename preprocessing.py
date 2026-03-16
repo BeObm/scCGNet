@@ -63,6 +63,10 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
         x,y=load_campell(data_path)
         data, n_clusters = build_pyg_graph(cell_gene_matrix=x, cell_labels=y)
         return data, n_clusters
+    elif dataset in ["baron_mouse","biase","darmanis","deng","goolam","romanov","zeisel"]:
+        x,y = read_csv_file(f"{data_path}/{dataset}.csv")
+        data, n_clusters = build_pyg_graph(cell_gene_matrix=x, cell_labels=y)
+        return data, n_clusters
     else:
         raise ValueError("Unknown dataset: {}".format(dataset))
 

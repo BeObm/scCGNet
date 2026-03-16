@@ -24,14 +24,14 @@ min_delta   = 1e-4
 patience    = 50
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class GCNEncoder(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, latent_channels,
                  activation=torch.relu):
         super().__init__()
-        self.conv1       = GraphSAGE(in_channels,     hidden_channels, num_layers=2)
-        self.conv_mu     = GraphSAGE(hidden_channels, latent_channels, num_layers=2)
-        self.conv_logvar = GraphSAGE(hidden_channels, latent_channels, num_layers=2)
+        self.conv1       = GCNConv(in_channels,     hidden_channels)
+        self.conv_mu     = GCNConv(hidden_channels, latent_channels)
+        self.conv_logvar = GCNConv(hidden_channels, latent_channels)
         self.activation  = activation
 
     def forward(self, x, edge_index):
@@ -39,7 +39,7 @@ class GCNEncoder(torch.nn.Module):
         return self.conv_mu(h, edge_index), self.conv_logvar(h, edge_index)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class GMCM_VGAE(nn.Module):
 
     def __init__(self, **kwargs):
@@ -63,7 +63,7 @@ class GMCM_VGAE(nn.Module):
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
-        # ── FIX 1: build each sub-module exactly once ──────────────────────
+        #  1: build each sub-module exactly once ──
         self.encoder      = GCNEncoder(self.num_features, self.num_neurons,
                                        self.embedding_size, self.activation).to(device)
         self.vgae         = VGAE(self.encoder).to(device)
@@ -77,7 +77,7 @@ class GMCM_VGAE(nn.Module):
         self.weights      = LossWeights(alpha_init=alpha_init,
                                         beta_init=beta_init).to(device)
 
-    # ─────────────────────────────────────────────────────────────────────
+    # 
     def Calculate_Loss(self, z, data, mu, theta, pi):
         # Edge reconstruction
         pos_edge_index, _ = self.get_pos_neg_edges(data)
@@ -97,18 +97,18 @@ class GMCM_VGAE(nn.Module):
         alpha, beta = self.weights()
         total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
 
-        # ── FIX 3: entropy regularisation — MAXIMISE entropy to prevent collapse
+        #  3: entropy regularisation — MAXIMISE entropy to prevent collapse
         # H = -sum p log p  (positive); we SUBTRACT lam*H to add it as a bonus
         lam_ent = 0.01
         p       = resp.clamp_min(1e-9)
         entropy = -(p * p.log()).sum(dim=1).mean()   # >0
         total   = total - lam_ent * entropy           # reward high entropy
 
-        # ── FIX 2: return order matches train() unpacking exactly ──────────
+        #  2: return order matches train() unpacking exactly
         # order: total, recon, zinb, kl, gmcm_nll, resp, alpha, beta
         return total, recon_loss, zinb_loss, kl, gmcm_nll, resp, alpha, beta
 
-    # ─────────────────────────────────────────────────────────────────────
+    # 
     def train_model(self, data, optimizer, epochs, lr, wd, momentum,
                     save_path, dataset):
         """Renamed from train() to avoid shadowing nn.Module.train()."""
@@ -138,7 +138,7 @@ class GMCM_VGAE(nn.Module):
         best_state = None
 
         for epoch in epoch_bar:
-            # ── set sub-modules to training mode explicitly ─────────────
+            # set sub-modules to training mode explicitly 
             self.vgae.train()
             self.zinb_decoder.train()
             self.projector.train()
@@ -154,14 +154,14 @@ class GMCM_VGAE(nn.Module):
             z               = self.vgae.encode(x, edge_index)
             mu, theta, pi   = self.zinb_decoder(z)
 
-            # ── FIX 2: unpack in the order Calculate_Loss actually returns ─
+            #  2: unpack in the order Calculate_Loss actually returns ─
             (Loss_total, Loss_recons, Loss_zinb,
              Loss_kl, Loss_gmcm, resp, alpha, beta) = \
                 self.Calculate_Loss(z, data, mu, theta, pi)
 
             Loss_total.backward()
 
-            # ── FIX 7: gradient clipping prevents exploding gradients ──────
+            #  7: gradient clipping prevents exploding gradients ─
             torch.nn.utils.clip_grad_norm_(
                 list(self.vgae.parameters()) +
                 list(self.zinb_decoder.parameters()) +
@@ -175,7 +175,7 @@ class GMCM_VGAE(nn.Module):
 
             ari, nmi, acc = self.eval_clustering_from_resp(resp, y)
 
-            # ── FIX 8: actually use bad_epochs for early stopping ──────────
+            #  8: actually use bad_epochs for early stopping
             if ari > best_ari + min_delta:
                 best_ari   = ari
                 bad_epochs = 0
@@ -219,7 +219,7 @@ class GMCM_VGAE(nn.Module):
         print(f"Best ARI={best_ari:.4f}")
         return ari, nmi, acc
 
-    # ── helpers (unchanged logic, kept for completeness) ──────────────────
+    # helpers (unchanged logic, kept for completeness) ─
     def get_pos_neg_edges(self, data):
         if hasattr(data, "pos_edge_label_index") and \
            hasattr(data, "neg_edge_label_index"):
@@ -278,7 +278,7 @@ class GMCM_VGAE(nn.Module):
         return self.clustering_scores(y_true, y_pred)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class ZINBDecoder(nn.Module):
     def __init__(self, latent_dim, n_genes, hidden_dim=128):
         super().__init__()
@@ -298,7 +298,7 @@ class ZINBDecoder(nn.Module):
         return mu, theta, pi
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class LossWeights(nn.Module):
     """
     FIX 4: store raw (unconstrained) parameters directly;
@@ -318,7 +318,7 @@ class LossWeights(nn.Module):
         return alpha, beta
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class GMCMProjector(nn.Module):
     """
     FIX 6: added hidden layer + nonlinearity so the projection is non-trivial.
@@ -336,7 +336,7 @@ class GMCMProjector(nn.Module):
         return self.proj(z)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 def _soft_rank_1d(x: torch.Tensor, tau: float) -> torch.Tensor:
     x    = x.view(-1, 1)
     diff = (x - x.t()) / tau
@@ -404,7 +404,7 @@ class GMCM(nn.Module):
         return resp, nll
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 class clustering_metrics:
     def __init__(self, true_label, predict_label):
         self.true_label = true_label
