@@ -21,21 +21,22 @@ dataset = "baron3"
 nClusters = 14
 
 # # ---- SEARCH SPACE ----
-embedding_sizeL = [64,256,512]
-num_neuronsL = [16,64,256,512]
+embedding_sizeL = [16]
+num_neuronsL = [256]
 activationL = ["Sigmoid"]
-optimizerL = ["Adam","SGD"]
-seedL = [8,42]
-wdL = [0.0,0.001]
+optimizerL = ["Adam"]
+seedL = [8]
+wdL = [0.0]
 momentumL = [0.9]
 min_clamp_meanL = [1e-5]
 max_clamp_meanL = [1e6]
 min_clamp_disL = [1e-4]
 max_clamp_disL = [1e4]
-gmcm_dimL = [16,32,64]
-epochs_clusteL = [300,500,800]
-lr_clusterL = [0.001,0.1,0.01]
+gmcm_dimL = [16]
+epochs_clusteL = [300]
+lr_clusterL = [0.001]
 # -----------------------
+
 
 device = get_device()
 
