@@ -9,6 +9,10 @@ import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import minmax_scale
 from dataset_utils import *
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
@@ -188,6 +192,44 @@ def get_device():
     return torch.device("cpu")  # Just
 
 
+def clustering_metrics(y_true, y_pred):
+    """
+    Compute ACC, ARI, NMI for clustering.
+
+    Args:
+        y_true: array-like, shape (N,)
+        y_pred: array-like, shape (N,)
+
+    Returns:
+        acc, ari, nmi
+    """
+
+    y_true = np.asarray(y_true).astype(np.int64)
+    y_pred = np.asarray(y_pred).astype(np.int64)
+
+    assert y_true.shape == y_pred.shape
+
+    # --- ACC (with Hungarian matching) ---
+    def compute_acc(y_true, y_pred):
+        D = max(y_pred.max(), y_true.max()) + 1
+        w = np.zeros((D, D), dtype=np.int64)
+
+        for i in range(y_pred.size):
+            w[y_pred[i], y_true[i]] += 1
+
+        # Hungarian algorithm
+        row_ind, col_ind = linear_sum_assignment(w.max() - w)
+        return w[row_ind, col_ind].sum() / y_pred.size
+
+    acc = compute_acc(y_true, y_pred)
+
+    # --- ARI ---
+    ari = adjusted_rand_score(y_true, y_pred)
+
+    # --- NMI ---
+    nmi = normalized_mutual_info_score(y_true, y_pred)
+
+    return acc, ari, nmi
 
 def to_pyg_data(adj, features, labels=None, make_undirected=False, add_self_loops=False):
     # --- adjacency -> edge_index / edge_weight ---

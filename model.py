@@ -13,426 +13,1042 @@ from preprocessing import get_device
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from scipy.optimize import linear_sum_assignment
 import csv, os
-from torch_geometric.nn import GCNConv, VGAE, GraphSAGE
+from torch_geometric.nn import GCNConv as gnc_encoder
+from torch import Tensor
+from typing import Tuple
+from torch_geometric.data import Data
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+import torch
+import torch.nn as nn
+from torch import Tensor
+from torch_geometric.data import Data
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from typing import Dict, List, Optional, Tuple
 
-device = get_device()
+import numpy as np
+from sklearn.metrics import (
+    normalized_mutual_info_score,
+    adjusted_rand_score,
+    accuracy_score,
+)
+from scipy.optimize import linear_sum_assignment
 
-gamma       = 1.0
-alpha_init  = 1.0
-beta_init   = 1.0
-min_delta   = 1e-4
-patience    = 50
 
 
-
-class GCNEncoder(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, latent_channels,
-                 activation=torch.relu):
+class GCNEncoder(nn.Module):
+    def __init__(self, in_channels, hidden_channels, hidden_channels_2, latent_channels,
+                 activation=nn.ReLU(), dropout=0.0):
         super().__init__()
-        self.conv1       = GCNConv(in_channels,     hidden_channels)
-        self.conv_mu     = GCNConv(hidden_channels, latent_channels)
-        self.conv_logvar = GCNConv(hidden_channels, latent_channels)
-        self.activation  = activation
+        self.activation    = activation
+        self.dropout       = nn.Dropout(p=dropout)
+        self.conv_hidden_1 = gnc_encoder(in_channels,       hidden_channels)
+        self.conv_hidden_2 = gnc_encoder(hidden_channels,   hidden_channels_2)
+        self.conv_mu       = gnc_encoder(hidden_channels_2, latent_channels)
+        self.conv_logvar   = gnc_encoder(hidden_channels_2, latent_channels)
 
-    def forward(self, x, edge_index):
-        h = self.activation(self.conv1(x, edge_index))
+    def _encode(self, x, edge_index):
+        h = self.dropout(self.activation(self.conv_hidden_1(x, edge_index)))
+        h = self.dropout(self.activation(self.conv_hidden_2(h, edge_index)))
+        return h
+
+    def forward(self, x, edge_index) :
+        h = self._encode(x, edge_index)
         return self.conv_mu(h, edge_index), self.conv_logvar(h, edge_index)
 
 
+class ZINBDecoder(nn.Module):
+    """
+    Decodes a latent representation z back into ZINB distribution parameters
+    that reconstruct the original data.x.
 
-class GMCM_VGAE(nn.Module):
+    The Zero-Inflated Negative Binomial (ZINB) distribution is parameterized by:
+        - pi    (π): zero-inflation probability     → sigmoid activation
+        - mu    (μ): negative binomial mean         → softmax activation (scaled)
+        - theta (θ): negative binomial dispersion   → softplus activation (strictly positive)
 
-    def __init__(self, **kwargs):
+    Args:
+        latent_channels:  Dimensionality of the encoder output z.
+        hidden_channels:  Dimensionality of the shared hidden layer.
+        out_channels:     Number of output features (must match data.x.shape[1]).
+        dropout:          Dropout probability in the hidden layer (0 = disabled).
+    """
+
+    def __init__(
+        self,
+        latent_channels: int,
+        hidden_channels: int,
+        out_channels:    int,
+        dropout:         float = 0.0,
+    ) -> None:
         super().__init__()
-        self.num_neurons    = kwargs['num_neurons']
-        self.num_features   = kwargs['num_features']
-        self.embedding_size = kwargs['embedding_size']
-        self.nClusters      = kwargs['nClusters']
-        self.tau_rank       = kwargs['tau_rank']
-        self.gmcm_dim       = kwargs['gmcm_dim']
 
-        act_map = {
-            "ReLU":    torch.relu,
-            "Sigmoid": torch.sigmoid,
-            "Tanh":    torch.tanh,
-            "Linear":  lambda x: x,
-        }
-        self.activation = act_map[kwargs['activation']]
-
-        self.seed = kwargs['seed']
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
-
-        #  1: build each sub-module exactly once ──
-        self.encoder      = GCNEncoder(self.num_features, self.num_neurons,
-                                       self.embedding_size, self.activation).to(device)
-        self.vgae         = VGAE(self.encoder).to(device)
-        self.zinb_decoder = ZINBDecoder(self.embedding_size,
-                                        self.num_features).to(device)
-        self.projector    = GMCMProjector(in_dim=self.embedding_size,
-                                          out_dim=self.gmcm_dim).to(device)
-        self.gmcm         = GMCM(n_components=self.nClusters,
-                                 n_features=self.gmcm_dim,
-                                 tau_rank=self.tau_rank).to(device)
-        self.weights      = LossWeights(alpha_init=alpha_init,
-                                        beta_init=beta_init).to(device)
-
-    # 
-    def Calculate_Loss(self, z, data, mu, theta, pi):
-        # Edge reconstruction
-        pos_edge_index, _ = self.get_pos_neg_edges(data)
-        recon_loss = self.vgae.recon_loss(z, pos_edge_index)
-
-        # KL (per-node average)
-        kl = (1.0 / data.num_nodes) * self.vgae.kl_loss()
-
-        # ZINB
-        zinb_loss = self.zinb_nll(data.x, mu, theta, pi)
-
-        # GMCM: project → copula → GMM NLL
-        zc = self.projector(z)
-        zc = (zc - zc.mean(0)) / (zc.std(0) + 1e-6)
-        resp, gmcm_nll = self.gmcm(zc)
-
-        alpha, beta = self.weights()
-        total = recon_loss + alpha * zinb_loss + beta * kl + gamma * gmcm_nll
-
-        #  3: entropy regularisation — MAXIMISE entropy to prevent collapse
-        # H = -sum p log p  (positive); we SUBTRACT lam*H to add it as a bonus
-        lam_ent = 0.01
-        p       = resp.clamp_min(1e-9)
-        entropy = -(p * p.log()).sum(dim=1).mean()   # >0
-        total   = total - lam_ent * entropy           # reward high entropy
-
-        #  2: return order matches train() unpacking exactly
-        # order: total, recon, zinb, kl, gmcm_nll, resp, alpha, beta
-        return total, recon_loss, zinb_loss, kl, gmcm_nll, resp, alpha, beta
-
-    # 
-    def train_model(self, data, optimizer, epochs, lr, wd, momentum,
-                    save_path, dataset):
-        """Renamed from train() to avoid shadowing nn.Module.train()."""
-        data = data.to(device)
-
-        opt_cls = {"Adam": Adam, "SGD": SGD, "RMSProp": RMSprop}[optimizer]
-        opti = opt_cls(
-            list(self.vgae.parameters()) +
-            list(self.zinb_decoder.parameters()) +
-            list(self.projector.parameters()) +
-            list(self.gmcm.parameters()) +
-            list(self.weights.parameters()),
-            lr=lr, weight_decay=wd
+        self.shared = nn.Sequential(
+            nn.Linear(latent_channels, hidden_channels),
+            nn.BatchNorm1d(hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(p=dropout),
         )
 
-        os.makedirs(save_path + dataset + '/cluster', exist_ok=True)
-        logfile   = open(save_path + dataset + '/cluster/log.csv', 'w')
-        logwriter = csv.DictWriter(logfile,
-                                   fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
-        logwriter.writeheader()
+        self.head_pi    = nn.Linear(hidden_channels, out_channels)
+        self.head_mu    = nn.Linear(hidden_channels, out_channels)
+        self.head_theta = nn.Linear(hidden_channels, out_channels)
 
-        epoch_bar = tqdm(range(epochs))
-        print('Training......')
+    def forward(self, z: Tensor) :
+        h     = self.shared(z)
+        pi    = torch.sigmoid(self.head_pi(h))                    # ∈ (0, 1)
+        mu    = torch.softmax(self.head_mu(h), dim=-1) * z.shape[0]  # ∈ (0, N), scaled mean
+        theta = torch.nn.functional.softplus(self.head_theta(h))  # ∈ (0, ∞)
+        return pi, mu, theta
 
-        best_ari   = -1.0
-        bad_epochs = 0
-        best_state = None
 
-        for epoch in epoch_bar:
-            # set sub-modules to training mode explicitly 
-            self.vgae.train()
-            self.zinb_decoder.train()
-            self.projector.train()
-            self.gmcm.train()
-            self.weights.train()
+def zinb_loss(
+    x:     Tensor,
+    pi:    Tensor,
+    mu:    Tensor,
+    theta: Tensor,
+    eps:   float = 1e-8,
+) -> Tensor:
+    """
+    Computes the ZINB negative log-likelihood loss.
 
-            opti.zero_grad()
+    The ZINB pmf mixes a point mass at zero with a Negative Binomial:
 
-            x          = data.x.to(device)
-            edge_index = data.edge_index.to(device)
-            y          = data.y.to(device)
+        P(x=0)  = π + (1-π) · NB(0 | μ, θ)
+        P(x>0)  = (1-π)     · NB(x | μ, θ)
 
-            z               = self.vgae.encode(x, edge_index)
-            mu, theta, pi   = self.zinb_decoder(z)
+    where NB is parameterized by mean μ and dispersion θ:
 
-            #  2: unpack in the order Calculate_Loss actually returns ─
-            (Loss_total, Loss_recons, Loss_zinb,
-             Loss_kl, Loss_gmcm, resp, alpha, beta) = \
-                self.Calculate_Loss(z, data, mu, theta, pi)
+        NB(x|μ,θ) = Γ(x+θ) / [Γ(θ)·x!] · (θ/(θ+μ))^θ · (μ/(θ+μ))^x
 
-            Loss_total.backward()
+    Args:
+        x:     Observed counts of shape (N, G).
+        pi:    Zero-inflation probabilities, shape (N, G), ∈ (0,1).
+        mu:    NB mean,       shape (N, G), > 0.
+        theta: NB dispersion, shape (N, G), > 0.
+        eps:   Small constant for numerical stability.
 
-            #  7: gradient clipping prevents exploding gradients ─
-            torch.nn.utils.clip_grad_norm_(
-                list(self.vgae.parameters()) +
-                list(self.zinb_decoder.parameters()) +
-                list(self.projector.parameters()) +
-                list(self.gmcm.parameters()) +
-                list(self.weights.parameters()),
-                max_norm=5.0
+    Returns:
+        Scalar mean negative log-likelihood.
+    """
+    # --- log NB probability at x=0 -------------------------------------------
+    # log NB(0|μ,θ) = θ · log(θ/(θ+μ))
+    log_nb_zero = theta * (torch.log(theta + eps) - torch.log(theta + mu + eps))
+
+    # --- log NB probability at x>0 -------------------------------------------
+    # log NB(x|μ,θ) = lgamma(x+θ) - lgamma(θ) - lgamma(x+1)
+    #               + θ·log(θ/(θ+μ)) + x·log(μ/(θ+μ))
+    log_nb_x = (
+        torch.lgamma(x + theta + eps)
+        - torch.lgamma(theta + eps)
+        - torch.lgamma(x + 1.0)
+        + theta * (torch.log(theta + eps) - torch.log(theta + mu + eps))
+        + x     * (torch.log(mu    + eps) - torch.log(theta + mu + eps))
+    )
+
+    # --- mix zero-inflation and NB -------------------------------------------
+    # For x == 0: log[ π + (1-π)·NB(0) ]
+    # For x >  0: log[ (1-π)·NB(x)     ]
+    log_pi     = torch.log(pi + eps)
+    log_1m_pi  = torch.log(1.0 - pi + eps)
+
+    zero_case    = torch.logaddexp(log_pi, log_1m_pi + log_nb_zero)
+    nonzero_case = log_1m_pi + log_nb_x
+
+    nll = -torch.where(x < eps, zero_case, nonzero_case)
+    return nll.mean()
+
+
+class AdjDecoder(nn.Module):
+    """
+    Reconstructs the adjacency matrix from a latent representation z
+    via an optional MLP projection followed by a scaled inner product.
+
+    The inner product approach is grounded in VGAE (Kipf & Welling, 2016):
+
+        Â = sigmoid(z_proj @ z_proj^T)
+
+    where each entry Â[i,j] ∈ (0,1) is the predicted probability of an
+    edge between nodes i and j.
+
+    Args:
+        latent_channels:  Dimensionality of z (encoder output).
+        hidden_channels:  Hidden dim of the projection MLP (None = skip MLP,
+                          use z directly for the inner product).
+        dropout:          Dropout probability inside the MLP (0 = disabled).
+    """
+
+    def __init__(
+        self,
+        latent_channels: int,
+        hidden_channels: int,
+        dropout:         float      = 0.0,
+    ) -> None:
+        super().__init__()
+
+        if hidden_channels is not None:
+            self.mlp = nn.Sequential(
+                nn.Linear(latent_channels, hidden_channels),
+                nn.BatchNorm1d(hidden_channels),
+                nn.ReLU(),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_channels, latent_channels),
             )
+        else:
+            self.mlp = nn.Identity()
 
-            opti.step()
+    def forward(self, z: Tensor) -> Tensor:
+        """
+        Args:
+            z: Node embeddings of shape (N, latent_channels).
 
-            ari, nmi, acc = self.eval_clustering_from_resp(resp, y)
-
-            #  8: actually use bad_epochs for early stopping
-            if ari > best_ari + min_delta:
-                best_ari   = ari
-                bad_epochs = 0
-                best_state = {
-                    "vgae": {k: v.detach().cpu().clone()
-                             for k, v in self.vgae.state_dict().items()},
-                    "zinb": {k: v.detach().cpu().clone()
-                             for k, v in self.zinb_decoder.state_dict().items()},
-                    "proj": {k: v.detach().cpu().clone()
-                             for k, v in self.projector.state_dict().items()},
-                    "gmcm": {k: v.detach().cpu().clone()
-                             for k, v in self.gmcm.state_dict().items()},
-                    "w":    {k: v.detach().cpu().clone()
-                             for k, v in self.weights.state_dict().items()},
-                }
-                torch.save(best_state,
-                           save_path + dataset + "/cluster/best_by_ari.pt")
+        Returns:
+            adj_hat: Reconstructed adjacency matrix of shape (N, N),
+                     each entry is a predicted edge probability ∈ (0, 1).
+        """
+        z_proj  = self.mlp(z)                          # (N, latent_channels)
+        scale   = z_proj.size(-1) ** 0.5               # √d stabilises dot products
+        logits  = (z_proj @ z_proj.T) / scale          # (N, N)
+        return torch.sigmoid(logits)                   # Â ∈ (0, 1)
 
 
-            logwriter.writerow({'iter': epoch+1, 'ari': ari, 'nmi': nmi,
-                                 'Loss_total': Loss_total.item()})
+def adj_reconstruction_loss(
+    adj_hat:   Tensor,
+    edge_index: Tensor,
+    num_nodes:  int,
+    pos_weight: Tensor,
+) -> Tensor:
+    """
+    Weighted binary cross-entropy between the reconstructed adjacency Â
+    and the true binary adjacency A, with automatic positive-class reweighting
+    to counter the severe class imbalance in sparse graphs.
 
-            if epoch == 0 or (epoch + 1) % 10 == 0:
-                epoch_bar.write(
-                    f"epoch={epoch+1:4d}  loss={Loss_total.item():.4f}  "
-                    f"recon={Loss_recons.item():.4f}  zinb={Loss_zinb.item():.4f}  "
-                    f"kl={Loss_kl.item():.4f}  gmcm={Loss_gmcm.item():.4f}  "
-                    f"α={alpha:.3g}  β={beta:.3g}  "
-                    f"ARI={ari:.4f}  NMI={nmi:.4f}  ACC={acc:.4f}"
-                )
+    For a sparse graph with E edges on N nodes, there are only E positive
+    entries but N²-E negatives — naïve BCE would collapse to predicting all
+    zeros. The positive weight w = (N²-E)/E corrects for this.
 
-        logfile.close()
+    Args:
+        adj_hat:    Predicted edge probabilities, shape (N, N) ∈ (0,1).
+        edge_index: True edges as COO index, shape (2, E).
+        num_nodes:  N — total number of nodes.
+        pos_weight: Override automatic positive weight (scalar tensor).
+                    Pass None to compute automatically from edge_index.
 
-        if best_state is not None:
-            self.vgae.load_state_dict(best_state["vgae"])
-            self.zinb_decoder.load_state_dict(best_state["zinb"])
-            self.projector.load_state_dict(best_state["proj"])
-            self.gmcm.load_state_dict(best_state["gmcm"])
-            self.weights.load_state_dict(best_state["w"])
+    Returns:
+        Scalar weighted BCE loss.
+    """
+    # Build dense binary ground-truth adjacency ---------------------------------
+    adj_true = torch.zeros(num_nodes, num_nodes, device=adj_hat.device)
+    adj_true[edge_index[0], edge_index[1]] = 1.0
 
-        print(f"Best ARI={best_ari:.4f}")
-        return ari, nmi, acc
+    # Compute positive weight from sparsity ratio if not provided ---------------
+    if pos_weight is None:
+        num_edges    = edge_index.size(1)
+        num_non_edge = num_nodes ** 2 - num_edges
+        pos_weight   = torch.tensor(
+            num_non_edge / (num_edges + 1e-8),
+            device=adj_hat.device,
+            dtype=adj_hat.dtype,
+        )
 
-    # helpers (unchanged logic, kept for completeness) ─
-    def get_pos_neg_edges(self, data):
-        if hasattr(data, "pos_edge_label_index") and \
-           hasattr(data, "neg_edge_label_index"):
-            return data.pos_edge_label_index, data.neg_edge_label_index
-        if hasattr(data, "pos_edge_index") and \
-           hasattr(data, "neg_edge_index"):
-            return data.pos_edge_index, data.neg_edge_index
-        if hasattr(data, "edge_label_index") and \
-           hasattr(data, "edge_label"):
-            idx = data.edge_label_index
-            y   = data.edge_label
-            return idx[:, y == 1], idx[:, y == 0]
-        keys = data.keys() if callable(getattr(data, "keys", None)) else []
-        raise RuntimeError(
-            f"No pos/neg edge attributes found. Keys: {keys}")
+    # Weighted BCE on flattened (N²,) tensors -----------------------------------
+    loss = F.binary_cross_entropy_with_logits(
+        input      = adj_hat.view(-1),
+        target     = adj_true.view(-1),
+        pos_weight = pos_weight,
+        reduction  = "mean",
+    )
+    return loss
 
-    def zinb_nll(self, x, mu, theta, pi, eps=1e-8):
-        t1 = (torch.lgamma(theta + x)
-              - torch.lgamma(theta)
-              - torch.lgamma(x + 1.0))
-        t2 = theta * (torch.log(theta + eps) - torch.log(theta + mu + eps))
-        t3 = x * (torch.log(mu + eps) - torch.log(theta + mu + eps))
-        nb_log_prob = t1 + t2 + t3
 
-        x_is_zero      = (x < 0.5).type_as(x)
-        log_pi         = torch.log(pi + eps)
-        log_1m_pi      = torch.log(1.0 - pi + eps)
-        zero_case      = torch.logaddexp(log_pi, log_1m_pi + nb_log_prob)
-        nonzero_case   = log_1m_pi + nb_log_prob
-        zinb_log_prob  = x_is_zero * zero_case + (1.0 - x_is_zero) * nonzero_case
-        return (-zinb_log_prob).mean()
+class GaussianMixtureCopulaModule(nn.Module):
+    """
+    Gaussian Mixture Copula Model (GMCM) for unsupervised clustering in
+    latent space.
 
-    def clustering_accuracy(self, y_true, y_pred):
-        y_true = np.asarray(y_true).astype(np.int64)
-        y_pred = np.asarray(y_pred).astype(np.int64)
-        D = max(y_pred.max(), y_true.max()) + 1
-        w = np.zeros((D, D), dtype=np.int64)
-        for i in range(y_true.size):
-            w[y_pred[i], y_true[i]] += 1
-        r, c = linear_sum_assignment(w.max() - w)
-        return w[r, c].sum() / y_true.size
+    The copula separates the modelling of marginal distributions from the
+    modelling of inter-dimensional dependence structure:
 
-    def clustering_scores(self, y_true, y_pred):
-        y_true = np.asarray(y_true).astype(np.int64)
-        y_pred = np.asarray(y_pred).astype(np.int64)
-        ari = adjusted_rand_score(y_true, y_pred)
-        nmi = normalized_mutual_info_score(
-            y_true, y_pred, average_method="arithmetic")
-        acc = self.clustering_accuracy(y_true, y_pred)
-        return ari, nmi, acc
+        1. Marginal transform (Sklar's theorem):
+               z  →  u = Φ⁻¹( F̂(z) )
+           Each dimension of z is mapped through its empirical CDF F̂ and
+           then through the probit transform Φ⁻¹ (inverse standard normal
+           CDF), yielding pseudo-normal scores u whose marginals are
+           standard normal. This removes any marginal-specific shape and
+           leaves only the dependency structure.
+
+        2. GMM in copula space:
+           A K-component Gaussian mixture is fitted on u. Each component
+           has a learnable mean μ_k and a full (lower-triangular) Cholesky
+           factor L_k that parameterises its covariance Σ_k = L_k L_kᵀ.
+           Full covariance captures arbitrary linear dependencies between
+           dimensions inside each cluster.
+
+        3. Soft responsibilities:
+               r_ik = π_k · p(u_i | k)  /  Σ_j π_j · p(u_i | j)
+           where p(u|k) = N(u; μ_k, L_k L_kᵀ).
+
+    Args:
+        latent_channels:  Dimensionality of z (and u).
+        num_clusters:     Number of Gaussian copula components K.
+        eps:              Diagonal jitter added to Cholesky for stability.
+    """
+
+    def __init__(
+        self,
+        latent_channels: int,
+        num_clusters:    int,
+        eps:             float = 1e-4,
+    ) -> None:
+        super().__init__()
+
+        self.K   = num_clusters
+        self.D   = latent_channels
+        self.eps = eps
+
+        # --- learnable GMM parameters in copula space -------------------------
+        self.mu        = nn.Parameter(torch.randn(num_clusters, latent_channels) * 0.1)
+        self.logits_pi = nn.Parameter(torch.zeros(num_clusters))
+
+        # Lower-triangular Cholesky factors L_k stored as flat vectors.
+        # tril_indices gives positions of the D*(D+1)/2 lower-tri entries.
+        n_tril = latent_channels * (latent_channels + 1) // 2
+
+        rows, cols = torch.tril_indices(latent_channels, latent_channels)
+        L_init = (
+            torch.eye(latent_channels)
+            .unsqueeze(0)
+            .expand(num_clusters, -1, -1)
+            .reshape(num_clusters, latent_channels, latent_channels)
+        )
+        self.L_flat = nn.Parameter(L_init[:, rows, cols].clone())  # index with plain variables
+
+        self.register_buffer("tril_rows", rows)
+        self.register_buffer("tril_cols", cols)
+
+    # ------------------------------------------------------------------
+    # Cholesky reconstruction
+    # ------------------------------------------------------------------
+
+    def _get_cholesky(self) -> Tensor:
+        """
+        Reconstructs (K, D, D) lower-triangular Cholesky matrices from
+        L_flat. Diagonal entries are passed through softplus to ensure
+        they are strictly positive (required for valid Cholesky factor).
+        """
+        L = torch.zeros(self.K, self.D, self.D, device=self.mu.device)
+        L[:, self.tril_rows, self.tril_cols] = self.L_flat
+
+        # softplus on diagonal entries ensures Σ_k = L_k L_kᵀ is PSD
+        diag_idx = torch.arange(self.D, device=self.mu.device)
+        L[:, diag_idx, diag_idx] = F.softplus(L[:, diag_idx, diag_idx]) + self.eps
+        return L                                               # (K, D, D)
+
+    # ------------------------------------------------------------------
+    # Marginal transform  z → u
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _empirical_cdf(z: Tensor) -> Tensor:
+        """
+        Computes per-dimension empirical CDF values (ranks / N).
+        Uses mid-ranks to avoid boundary values of exactly 0 or 1.
+
+        Args:
+            z: (N, D)
+
+        Returns:
+            u_hat: (N, D)  values in (0, 1)
+        """
+        N    = z.size(0)
+        # argsort twice gives the rank of each element
+        ranks = z.argsort(dim=0).argsort(dim=0).float()       # (N, D)
+        return (ranks + 1.0) / (N + 1.0)                      # mid-rank CDF
+
+    @staticmethod
+    def _probit(p: Tensor) -> Tensor:
+        """Φ⁻¹(p) — inverse standard normal CDF via erfinv."""
+        p     = p.clamp(1e-6, 1 - 1e-6)
+        return torch.erfinv(2.0 * p - 1.0) * (2.0 ** 0.5)
+
+    def _marginal_transform(self, z: Tensor) -> Tensor:
+        """
+        Full marginal transform: z → u = Φ⁻¹( F̂(z) ).
+
+        Args:
+            z: (N, D)
+
+        Returns:
+            u: (N, D)  pseudo-normal copula scores
+        """
+        cdf = self._empirical_cdf(z)
+        return self._probit(cdf)
+
+    # ------------------------------------------------------------------
+    # GMM log-likelihood in copula space
+    # ------------------------------------------------------------------
+
+    def _log_component_density(self, u: Tensor) -> Tensor:
+        """
+        Log-likelihood of u under each Gaussian component using the
+        Cholesky parameterisation for numerical efficiency:
+
+            log N(u; μ_k, L_k L_kᵀ) =
+                -D/2 log(2π)
+                - Σ_d log L_k[d,d]          ← log|Σ|/2 via Cholesky
+                - 1/2 ‖L_k⁻¹(u - μ_k)‖²   ← Mahalanobis via triangular solve
+
+        Args:
+            u: (N, D)
+
+        Returns:
+            log_p: (N, K)
+        """
+        L       = self._get_cholesky()                        # (K, D, D)
+        diff    = u.unsqueeze(1) - self.mu.unsqueeze(0)       # (N, K, D)
+
+        # Triangular solve: v_ik = L_k⁻¹ (u_i - μ_k)
+        # torch.linalg.solve_triangular expects (..., D, D), (..., D, 1)
+        diff_t  = diff.unsqueeze(-1)                          # (N, K, D, 1)
+        L_exp   = L.unsqueeze(0).expand(u.size(0), -1, -1, -1)  # (N, K, D, D)
+        v       = torch.linalg.solve_triangular(
+            L_exp, diff_t, upper=False
+        ).squeeze(-1)                                         # (N, K, D)
+
+        # log|Σ_k|/2 = Σ_d log L_k[d,d]
+        diag_idx   = torch.arange(self.D, device=u.device)
+        log_det    = L[:, diag_idx, diag_idx].log().sum(dim=-1)  # (K,)
+
+        mahalanobis = 0.5 * v.pow(2).sum(dim=-1)             # (N, K)
+        log_2pi     = 0.5 * self.D * torch.log(
+            torch.tensor(2 * torch.pi, device=u.device)
+        )
+
+        return -log_2pi - log_det.unsqueeze(0) - mahalanobis  # (N, K)
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
+    def forward(self, z: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Args:
+            z: (N, D) latent node embeddings.
+
+        Returns:
+            r:      Soft responsibilities (N, K), each row sums to 1.
+            log_px: Per-node log marginal likelihood (N,) for the NLL loss.
+        """
+        u        = self._marginal_transform(z)                # (N, D)
+        log_pi   = F.log_softmax(self.logits_pi, dim=0)       # (K,)
+        log_p_k  = self._log_component_density(u)             # (N, K)
+        log_w_p  = log_pi.unsqueeze(0) + log_p_k             # (N, K)
+
+        log_px   = torch.logsumexp(log_w_p, dim=-1)           # (N,)  log Σ_k π_k p(u|k)
+        r        = (log_w_p - log_px.unsqueeze(1)).exp()      # (N, K)  responsibilities
+
+        return r, log_px
 
     @torch.no_grad()
-    def eval_clustering_from_resp(self, resp, y_true):
-        y_pred = resp.argmax(dim=1).cpu().numpy()
-        y_true = y_true.cpu().numpy()
-        return self.clustering_scores(y_true, y_pred)
+    def predict(self, z: Tensor) -> Tensor:
+        """Hard cluster labels via argmax over responsibilities."""
+        r, _ = self.forward(z)
+        return r.argmax(dim=-1)                               # (N,)
+
+    @torch.no_grad()
+    def initialize_means(self, z: Tensor) -> None:
+        """
+        Warm-starts cluster means using K-Means++ on the copula-transformed
+        scores u. Always call before training to avoid degenerate initialisation.
+        """
+        u       = self._marginal_transform(z)
+        centers = _kmeans_pp_init(u, self.K)
+        self.mu.data.copy_(centers)
+
+
+# -----------------------------------------------------------------------
+# K-Means++ initialisation
+# -----------------------------------------------------------------------
+
+def _kmeans_pp_init(u: Tensor, K: int) -> Tensor:
+    N       = u.size(0)
+    idx     = torch.randint(N, (1,)).item()
+    centers = [u[idx].detach().cpu()]
+
+    for _ in range(1, K):
+        stacked = torch.stack(centers, dim=0)
+        dists   = torch.cdist(u.detach().cpu(), stacked).min(dim=1).values
+        probs   = dists.pow(2)
+        probs  /= probs.sum()
+        idx     = torch.multinomial(probs, 1).item()
+        centers.append(u[idx].detach().cpu())
+
+    return torch.stack(centers).to(u.device)
+
+
+# -----------------------------------------------------------------------
+# GMCM loss
+# -----------------------------------------------------------------------
+
+def gmcm_loss(
+    r:            Tensor,
+    log_px:       Tensor,
+    logits_pi:    Tensor,
+    lambda_ent:   float = 0.1,
+    lambda_prior: float = 0.01,
+) -> Tensor:
+    """
+    GMCM clustering loss with three terms:
+
+    1. NLL — negative log marginal likelihood of u under the mixture.
+         Maximising this is the canonical copula model objective; it
+         jointly optimises component parameters and mixture weights.
+
+    2. Entropy regularisation — maximises H(r) across nodes to prevent
+         cluster collapse where all nodes are assigned to one component.
+
+    3. Uniform prior on π — KL(π ‖ Uniform) penalises dead components
+         whose mixture weight decays to zero, maintaining diversity.
+
+    Args:
+        r:            Soft responsibilities (N, K).
+        log_px:       Per-node log marginal likelihood (N,).
+        logits_pi:    Raw mixture weight logits (K,) from the module.
+        lambda_ent:   Weight on entropy regularisation term.
+        lambda_prior: Weight on mixture prior regularisation term.
+
+    Returns:
+        Scalar total loss.
+    """
+    # 1. NLL: minimise negative log-likelihood --------------------------------
+    nll = -log_px.mean()
+
+    # 2. Entropy regularisation: maximise H(r) → minimise -H(r) --------------
+    entropy = -(r * r.log().clamp(min=-1e8)).sum(dim=-1).mean()
+
+    # 3. Uniform prior on π: KL(π ‖ Uniform(K)) ------------------------------
+    K           = logits_pi.size(0)
+    log_pi      = F.log_softmax(logits_pi, dim=0)
+    log_uniform = torch.full_like(log_pi, -torch.log(torch.tensor(K, dtype=log_pi.dtype)))
+    prior_kl    = F.kl_div(log_pi, log_uniform.exp(), reduction="sum")
+
+    return nll - lambda_ent * entropy + lambda_prior * prior_kl
 
 
 
-class ZINBDecoder(nn.Module):
-    def __init__(self, latent_dim, n_genes, hidden_dim=128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+
+
+# -----------------------------------------------------------------------
+# Reparameterisation trick
+# -----------------------------------------------------------------------
+
+def reparameterise(mu: Tensor, log_var: Tensor) -> Tensor:
+    """
+    z = μ + ε·σ,  ε ~ N(0, I)
+
+    During eval the encoder is deterministic (use mu directly).
+    During training the stochastic sample enables the ELBO gradient.
+    """
+    std = (0.5 * log_var).exp()
+    eps = torch.randn_like(std)
+    return mu + eps * std
+
+
+# -----------------------------------------------------------------------
+# KL divergence  KL( q(z|x) ‖ N(0,I) )
+# -----------------------------------------------------------------------
+
+def kl_divergence(mu: Tensor, log_var: Tensor) -> Tensor:
+    """
+    Analytical KL between a diagonal Gaussian q(z|x) = N(μ, diag(σ²))
+    and the standard normal prior p(z) = N(0, I):
+
+        KL = -½ Σ_d ( 1 + log σ²_d - μ²_d - σ²_d )
+
+    Averaged over nodes and latent dimensions.
+    """
+    return -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean()
+
+
+# -----------------------------------------------------------------------
+# Loss weights
+# -----------------------------------------------------------------------
+
+class LossWeights:
+    zinb:    float = 1.0
+    adj:     float = 1.0
+    kl:      float = 1e-3   # start small — KL tends to dominate early
+    gmcm:    float = 0.1
+
+    # KL annealing: ramp from 0 → kl_max over the pre-train phase
+    kl_ramp_start:   int = 0
+    kl_ramp_end:     int = 50
+
+    # GMCM annealing: only active during fine-tuning
+    gmcm_ramp_start: int = 100
+    gmcm_ramp_end:   int = 300
+
+
+# -----------------------------------------------------------------------
+# Annealing helper
+# -----------------------------------------------------------------------
+
+def linear_anneal(epoch: int, start: int, end: int, max_val: float) -> float:
+    """Linearly ramps a weight from 0 to max_val between start and end."""
+    if epoch < start:
+        return 0.0
+    if epoch >= end:
+        return max_val
+    return max_val * (epoch - start) / (end - start)
+
+
+# -----------------------------------------------------------------------
+# Single training step
+# -----------------------------------------------------------------------
+
+def train_step(
+    data:       Data,
+    encoder:    nn.Module,
+    zinb_dec:   nn.Module,
+    adj_dec:    nn.Module,
+    gmcm:       nn.Module,
+    optimizer:  torch.optim.Optimizer,
+    weights:    LossWeights,
+    epoch:      int,
+    device:     torch.device,
+) :
+
+    encoder.train()
+    zinb_dec.train()
+    adj_dec.train()
+    gmcm.train()
+    optimizer.zero_grad()
+
+    x          = data.x.to(device)
+    edge_index = data.edge_index.to(device)
+    N          = x.size(0)
+
+    # --- 1. Encode (VGAE) ----------------------------------------------------
+    # GCNEncoder now returns (mu, log_var) — see updated encoder below
+    mu, log_var = encoder(x, edge_index)              # (N, D), (N, D)
+    z           = reparameterise(mu, log_var)         # (N, D)  stochastic sample
+
+    # --- 2. KL divergence (annealed) -----------------------------------------
+    loss_kl  = kl_divergence(mu, log_var)
+    w_kl     = linear_anneal(epoch, weights.kl_ramp_start, weights.kl_ramp_end, weights.kl)
+
+    # --- 3. ZINB feature reconstruction loss ---------------------------------
+    pi, mu_zinb, theta = zinb_dec(z)
+    loss_zinb          = zinb_loss(x, pi, mu_zinb, theta)
+
+    # --- 4. Adjacency reconstruction loss ------------------------------------
+    adj_hat  = adj_dec(z)
+    loss_adj = adj_reconstruction_loss(adj_hat, edge_index, N,None)
+
+    # --- 5. GMCM clustering loss (annealed) ----------------------------------
+    r, log_px = gmcm(z)
+    loss_gmcm = gmcm_loss(r, log_px, gmcm.logits_pi)
+    w_gmcm    = linear_anneal(epoch, weights.gmcm_ramp_start, weights.gmcm_ramp_end, weights.gmcm)
+
+    # --- 6. Total ELBO-style objective ---------------------------------------
+    #
+    #   L = E[log p(x|z)]          ← ZINB reconstruction
+    #     + E[log p(A|z)]          ← adjacency reconstruction
+    #     - KL(q(z|x) ‖ p(z))     ← VAE regularisation
+    #     + λ_gmcm · L_gmcm       ← clustering (annealed)
+    #
+    loss = (
+        weights.zinb * loss_zinb
+        + weights.adj * loss_adj
+        + w_kl        * loss_kl
+        + w_gmcm      * loss_gmcm
+    )
+
+    loss.backward()
+    nn.utils.clip_grad_norm_(
+        list(encoder.parameters())
+        + list(zinb_dec.parameters())
+        + list(adj_dec.parameters())
+        + list(gmcm.parameters()),
+        max_norm=1.0,
+    )
+    optimizer.step()
+
+    return {
+        "loss/total": loss.item(),
+        "loss/zinb":  loss_zinb.item(),
+        "loss/adj":   loss_adj.item(),
+        "loss/kl":    loss_kl.item(),
+        "loss/gmcm":  loss_gmcm.item(),
+        "w/kl":       w_kl,
+        "w/gmcm":     w_gmcm,
+    }
+
+
+# -----------------------------------------------------------------------
+# Evaluation step
+# -----------------------------------------------------------------------
+
+@torch.no_grad()
+def eval_step(
+    data:     Data,
+    encoder:  nn.Module,
+    zinb_dec: nn.Module,
+    adj_dec:  nn.Module,
+    gmcm:     nn.Module,
+    device:   torch.device,
+) :
+
+    encoder.eval()
+    zinb_dec.eval()
+    adj_dec.eval()
+    gmcm.eval()
+
+    x          = data.x.to(device)
+    edge_index = data.edge_index.to(device)
+    N          = x.size(0)
+
+    # Use mu directly at eval time — deterministic, lower variance estimate
+    mu, log_var      = encoder(x, edge_index)
+    z                = mu
+
+    pi, mu_zinb, theta = zinb_dec(z)
+    adj_hat            = adj_dec(z)
+    r, log_px          = gmcm(z)
+
+    return {
+        "val/zinb": zinb_loss(x, pi, mu_zinb, theta).item(),
+        "val/adj":  adj_reconstruction_loss(adj_hat, edge_index, N,None).item(),
+        "val/kl":   kl_divergence(mu, log_var).item(),
+        "val/gmcm": gmcm_loss(r, log_px, gmcm.logits_pi).item(),
+        "val/nll":  (-log_px.mean()).item(),
+    }
+
+
+
+
+# -----------------------------------------------------------------------
+# Cluster accuracy via Hungarian algorithm
+# -----------------------------------------------------------------------
+
+def cluster_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Computes clustering accuracy by solving the optimal label assignment
+    between predicted cluster indices and true class labels using the
+    Hungarian algorithm.
+
+    A direct accuracy_score(y_true, y_pred) would be wrong because
+    cluster index 0 may correspond to true class 3 — the Hungarian
+    method finds the permutation of predicted labels that maximises
+    agreement with ground truth.
+
+    Args:
+        y_true: Ground-truth integer labels (N,).
+        y_pred: Predicted cluster indices   (N,).
+
+    Returns:
+        Accuracy in [0, 1].
+    """
+    assert y_true.shape == y_pred.shape
+    K = max(y_true.max(), y_pred.max()) + 1
+
+    # Build confusion matrix C where C[i,j] = # nodes with pred=i, true=j
+    C = np.zeros((K, K), dtype=np.int64)
+    for p, t in zip(y_pred, y_true):
+        C[p, t] += 1
+
+    # Hungarian algorithm finds the assignment that maximises the trace
+    row_ind, col_ind = linear_sum_assignment(-C)
+    return C[row_ind, col_ind].sum() / y_true.shape[0]
+
+
+# -----------------------------------------------------------------------
+# Clustering metrics
+# -----------------------------------------------------------------------
+
+@torch.no_grad()
+def compute_metrics(
+    encoder:  nn.Module,
+    gmcm:     nn.Module,
+    data:     Data,
+    y_true:   np.ndarray,
+    device:   torch.device,
+) -> Dict[str, float]:
+    """
+    Computes ACC, NMI, and ARI against ground-truth labels.
+
+    Args:
+        encoder:  Trained GCNEncoder (VGAE — returns mu, log_var).
+        gmcm:     Trained GaussianMixtureCopulaModule.
+        data:     PyG Data object.
+        y_true:   Ground-truth integer class labels (N,).
+        device:   Target device.
+
+    Returns:
+        Dict with keys acc, nmi, ari.
+    """
+    encoder.eval()
+    gmcm.eval()
+
+    mu, _  = encoder(data.x.to(device), data.edge_index.to(device))
+    r, _   = gmcm(mu)
+    y_pred = r.argmax(dim=-1).cpu().numpy()
+
+    return {
+        "acc": cluster_accuracy(y_true, y_pred),
+        "nmi": normalized_mutual_info_score(y_true, y_pred, average_method="arithmetic"),
+        "ari": adjusted_rand_score(y_true, y_pred),
+    }
+
+
+# -----------------------------------------------------------------------
+# Checkpoint helpers
+# -----------------------------------------------------------------------
+
+def save_checkpoint(
+    path:     str,
+    epoch:    int,
+    encoder:  nn.Module,
+    zinb_dec: nn.Module,
+    adj_dec:  nn.Module,
+    gmcm:     nn.Module,
+    optimizer: torch.optim.Optimizer,
+    metrics:  Dict[str, float],
+) -> None:
+    torch.save({
+        "epoch":          epoch,
+        "encoder":        encoder.state_dict(),
+        "zinb_dec":       zinb_dec.state_dict(),
+        "adj_dec":        adj_dec.state_dict(),
+        "gmcm":           gmcm.state_dict(),
+        "optimizer":      optimizer.state_dict(),
+        "metrics":        metrics,
+    }, path)
+
+
+def load_checkpoint(
+    path:     str,
+    encoder:  nn.Module,
+    zinb_dec: nn.Module,
+    adj_dec:  nn.Module,
+    gmcm:     nn.Module,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+) -> Dict:
+    ckpt = torch.load(path, map_location="cpu")
+    encoder.load_state_dict(ckpt["encoder"])
+    zinb_dec.load_state_dict(ckpt["zinb_dec"])
+    adj_dec.load_state_dict(ckpt["adj_dec"])
+    gmcm.load_state_dict(ckpt["gmcm"])
+    if optimizer is not None:
+        optimizer.load_state_dict(ckpt["optimizer"])
+    return ckpt
+
+
+# -----------------------------------------------------------------------
+# Pretty printer
+# -----------------------------------------------------------------------
+
+def print_epoch(
+    epoch:       int,
+    total:       int,
+    stage:       str,
+    train_m:     Dict[str, float],
+    val_m:       Optional[Dict[str, float]],
+    cluster_m:   Optional[Dict[str, float]],
+    is_best:     bool,
+) -> None:
+    tag  = "★ BEST" if is_best else "      "
+    sep  = "─" * 80
+
+    print(sep)
+    print(
+        f"{tag}  [{stage.upper()}]  epoch {epoch:>4d}/{total}"
+        f"   total={train_m['loss/total']:.4f}"
+        f"   zinb={train_m['loss/zinb']:.4f}"
+        f"   adj={train_m['loss/adj']:.4f}"
+        f"   kl={train_m['loss/kl']:.4f}(w={train_m['w/kl']:.3f})"
+        f"   gmcm={train_m['loss/gmcm']:.4f}(w={train_m['w/gmcm']:.3f})"
+    )
+    if val_m:
+        print(
+            f"         [VAL]"
+            f"   zinb={val_m['val/zinb']:.4f}"
+            f"   adj={val_m['val/adj']:.4f}"
+            f"   kl={val_m['val/kl']:.4f}"
+            f"   gmcm={val_m['val/gmcm']:.4f}"
+            f"   nll={val_m['val/nll']:.4f}"
         )
-        self.mu_head    = nn.Linear(hidden_dim, n_genes)
-        self.theta_head = nn.Linear(hidden_dim, n_genes)
-        self.pi_head    = nn.Linear(hidden_dim, n_genes)
-
-    def forward(self, z):
-        h     = self.net(z)
-        mu    = F.softplus(self.mu_head(h))    + 1e-4
-        theta = F.softplus(self.theta_head(h)) + 1e-4
-        pi    = torch.sigmoid(self.pi_head(h))
-        return mu, theta, pi
-
-
-
-class LossWeights(nn.Module):
-    """
-    FIX 4: store raw (unconstrained) parameters directly;
-    softplus alone is the correct positive mapping.
-    """
-    def __init__(self, alpha_init=1.0, beta_init=1.0):
-        super().__init__()
-        # initialise so softplus(p) ≈ alpha_init
-        self._a = nn.Parameter(torch.tensor(
-            float(np.log(np.exp(alpha_init) - 1))))
-        self._b = nn.Parameter(torch.tensor(
-            float(np.log(np.exp(beta_init)  - 1))))
-
-    def forward(self):
-        alpha = F.softplus(self._a).clamp(1e-3, 1e3)
-        beta  = F.softplus(self._b).clamp(1e-3, 1e3)
-        return alpha, beta
-
-
-
-class GMCMProjector(nn.Module):
-    """
-    FIX 6: added hidden layer + nonlinearity so the projection is non-trivial.
-    """
-    def __init__(self, in_dim=256, out_dim=16):
-        super().__init__()
-        hidden = max(in_dim // 2, out_dim * 2)
-        self.proj = nn.Sequential(
-            nn.Linear(in_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, out_dim),
+    if cluster_m:
+        print(
+            f"         [CLUST]"
+            f"   ACC={cluster_m['acc']:.4f}"
+            f"   NMI={cluster_m['nmi']:.4f}"
+            f"   ARI={cluster_m['ari']:.4f}"
         )
 
-    def forward(self, z):
-        return self.proj(z)
 
+# -----------------------------------------------------------------------
+# Full training loop
+# -----------------------------------------------------------------------
 
+def train(
+    data:              Data,
+    encoder:           nn.Module,
+    zinb_dec:          nn.Module,
+    adj_dec:           nn.Module,
+    gmcm:              nn.Module,
+    y_true:            Optional[np.ndarray]  = None,
+    n_pretrain_epochs: int                   = 250,
+    n_finetune_epochs: int                   = 800,
+    lr:                float                 = 1e-4,
+    weight_decay:      float                 = 1e-4,
+    device:            Optional[torch.device] = None,
+    val_data:          Optional[Data]        = None,
+    log_every:         int                   = 10,
+    ckpt_path:         str                   = "best_model.pt",
+    best_metric:       str                   = "nmi",   # acc | nmi | ari | val/nll
+) -> Dict[str, List]:
+    """
+    Two-stage VGAE training with checkpointing and clustering metrics.
 
-def _soft_rank_1d(x: torch.Tensor, tau: float) -> torch.Tensor:
-    x    = x.view(-1, 1)
-    diff = (x - x.t()) / tau
-    P    = torch.sigmoid(diff)
-    return 1.0 + P.sum(dim=1)
+    Best model selection:
+        If y_true is provided, best model is selected by the clustering
+        metric specified in best_metric (acc / nmi / ari), evaluated on
+        the training graph (standard protocol for unsupervised graph
+        clustering benchmarks where no held-out labels exist).
 
+        If y_true is None, best model falls back to minimising val/nll
+        (or total train loss when val_data is also None).
 
-def copula_normal_scores_soft(Z: torch.Tensor,
-                               tau_rank: float = 0.1,
-                               eps: float = 1e-4) -> torch.Tensor:
-    N, D = Z.shape
-    s2   = torch.sqrt(torch.tensor(2.0, device=Z.device, dtype=Z.dtype))
-    cols = []
-    for j in range(D):
-        r = _soft_rank_1d(Z[:, j], tau=tau_rank)
-        u = (r / (N + 1.0)).clamp(eps, 1.0 - eps)
-        y = s2 * torch.erfinv(2.0 * u - 1.0)
-        cols.append(y)
-    return torch.stack(cols, dim=1)
+    Args:
+        data:              Training PyG Data object.
+        encoder:           GCNEncoder instance.
+        zinb_dec:          ZINBDecoder instance.
+        adj_dec:           AdjDecoder instance.
+        gmcm:              GaussianMixtureCopulaModule instance.
+        y_true:            Ground-truth integer labels (N,) for ACC/NMI/ARI.
+        n_pretrain_epochs: Reconstruction-only warm-up epochs.
+        n_finetune_epochs: Joint fine-tuning epochs.
+        lr:                Learning rate.
+        weight_decay:      AdamW L2 penalty.
+        device:            Target device (auto if None).
+        val_data:          Optional held-out graph for validation losses.
+        log_every:         Print every N epochs.
+        ckpt_path:         Where to save the best checkpoint.
+        best_metric:       Metric used to decide "best" model.
+    """
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    encoder.to(device)
+    zinb_dec.to(device)
+    adj_dec.to(device)
+    gmcm.to(device)
 
-class GMCM(nn.Module):
-    def __init__(self, n_components, n_features,
-                 tau_rank=0.1, eps=1e-4, jitter=1e-4):
-        super().__init__()
-        self.K        = int(n_components)
-        self.D        = int(n_features)
-        self.tau_rank = float(tau_rank)
-        self.eps      = float(eps)
-        self.jitter   = float(jitter)
+    optimizer = Adam(
+        list(encoder.parameters())
+        + list(zinb_dec.parameters())
+        + list(adj_dec.parameters())
+        + list(gmcm.parameters()),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    scheduler = ReduceLROnPlateau(optimizer, patience=20, factor=0.5, verbose=False)
 
-        self.logits          = nn.Parameter(torch.zeros(self.K))
-        self.means           = nn.Parameter(torch.randn(self.K, self.D) * 0.01)
-        self.L_unconstrained = nn.Parameter(
-            torch.zeros(self.K, self.D, self.D))
-        nn.init.normal_(self.L_unconstrained, mean=0.0, std=0.01)
+    weights                  = LossWeights()
+    weights.kl_ramp_end      = n_pretrain_epochs
+    weights.gmcm_ramp_start  = n_pretrain_epochs
+    weights.gmcm_ramp_end    = n_pretrain_epochs + n_finetune_epochs // 2
 
-    def _cholesky(self):
-        L        = torch.tril(self.L_unconstrained)
-        diag     = torch.diagonal(L, dim1=-2, dim2=-1)
-        diag_pos = F.softplus(diag) + self.jitter
-        return L - torch.diag_embed(diag) + torch.diag_embed(diag_pos)
+    history: Dict[str, List] = {k: [] for k in [
+        "loss/total", "loss/zinb", "loss/adj", "loss/kl",  "loss/gmcm",
+        "val/zinb",   "val/adj",   "val/kl",   "val/gmcm", "val/nll",
+        "acc",        "nmi",       "ari",
+    ]}
 
-    def _log_prob_y_given_k(self, Y):
-        N, D     = Y.shape
-        L        = self._cholesky()                          # (K,D,D)
-        diff     = Y[:, None, :] - self.means[None, :, :]   # (N,K,D)
-        diff_kdn = diff.permute(1, 2, 0)                     # (K,D,N)
-        v        = torch.linalg.solve_triangular(
-            L, diff_kdn, upper=False)                        # (K,D,N)
-        quad     = (v * v).sum(dim=1).permute(1, 0)         # (N,K)
-        logdet   = 2.0 * torch.log(
-            torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=1) # (K,)
-        const    = D * math.log(2.0 * math.pi)
-        return -0.5 * (quad + logdet[None, :] + const)
+    total_epochs = n_pretrain_epochs + n_finetune_epochs
 
-    def forward(self, Z):
-        Y        = copula_normal_scores_soft(
-            Z, tau_rank=self.tau_rank, eps=self.eps)
-        log_pi   = F.log_softmax(self.logits, dim=0)
-        log_p_yk = self._log_prob_y_given_k(Y)
-        log_joint = log_p_yk + log_pi[None, :]
-        nll      = -torch.logsumexp(log_joint, dim=1).mean()
-        resp     = torch.softmax(log_joint, dim=1)
-        return resp, nll
+    # higher-is-better metrics; lower-is-better otherwise
+    higher_is_better = best_metric in ("acc", "nmi", "ari")
+    best_score       = -np.inf if higher_is_better else np.inf
+    best_epoch       = 0
 
+    print(f"\n{'═'*80}")
+    print(f"  Training   device={device}   pretrain={n_pretrain_epochs}   finetune={n_finetune_epochs}")
+    print(f"  Best-model criterion: {best_metric}   checkpoint → {ckpt_path}")
+    print(f"{'═'*80}\n")
 
+    for epoch in range(total_epochs):
 
-class clustering_metrics:
-    def __init__(self, true_label, predict_label):
-        self.true_label = true_label
-        self.pred_label = predict_label
+        # --- GMCM warm start at stage transition ----------------------------
+        if epoch == n_pretrain_epochs:
+            print(f"\n{'─'*80}")
+            print("  Pre-training complete — initialising GMCM via K-Means++ on μ")
+            with torch.no_grad():
+                encoder.eval()
+                mu, _ = encoder(data.x.to(device), data.edge_index.to(device))
+                gmcm.initialize_means(mu)
+            print("  Beginning joint fine-tuning")
+            print(f"{'─'*80}\n")
 
-    def clusteringAcc(self):
-        l1 = list(set(self.true_label))
-        l2 = list(set(self.pred_label))
-        if len(l1) != len(l2):
-            return 0
-        D    = len(l1)
-        cost = np.zeros((D, D), dtype=int)
-        for i, c1 in enumerate(l1):
-            mps = [i1 for i1, e1 in enumerate(self.true_label) if e1 == c1]
-            for j, c2 in enumerate(l2):
-                cost[i][j] = sum(1 for i1 in mps if self.pred_label[i1] == c2)
-        m       = Munkres()
-        indexes = m.compute((-cost).tolist())
-        new_predict = np.zeros(len(self.pred_label))
-        for i, c in enumerate(l1):
-            c2 = l2[indexes[i][1]]
-            ai = [ind for ind, elm in enumerate(self.pred_label) if elm == c2]
-            new_predict[ai] = c
-        return metrics.accuracy_score(self.true_label, new_predict)
+        # --- Training step --------------------------------------------------
+        train_m = train_step(
+            data, encoder, zinb_dec, adj_dec, gmcm,
+            optimizer, weights, epoch, device,
+        )
+        for k, v in train_m.items():
+            if k in history:
+                history[k].append(v)
 
-    def evaluationClusterModelFromLabel(self):
-        nmi      = metrics.normalized_mutual_info_score(
-            self.true_label, self.pred_label)
-        adjscore = adjusted_rand_score(self.true_label, self.pred_label)
-        acc      = self.clusteringAcc()
-        return acc, nmi, adjscore
+        # --- Validation losses ----------------------------------------------
+        val_m = None
+        if val_data is not None:
+            val_m = eval_step(val_data, encoder, zinb_dec, adj_dec, gmcm, device)
+            for k, v in val_m.items():
+                history[k].append(v)
+            monitor = val_m["val/zinb"] + val_m["val/adj"] + val_m["val/kl"]
+            scheduler.step(monitor)
+
+        # --- Clustering metrics (only during fine-tuning) -------------------
+        cluster_m = None
+        in_finetune = epoch >= n_pretrain_epochs
+        if in_finetune and y_true is not None:
+            cluster_m = compute_metrics(encoder, gmcm, data, y_true, device)
+            for k, v in cluster_m.items():
+                history[k].append(v)
+
+        # --- Best model selection -------------------------------------------
+        is_best = False
+        if in_finetune:
+            if best_metric in ("acc", "nmi", "ari") and cluster_m is not None:
+                score = cluster_m[best_metric]
+            elif val_m is not None:
+                score = val_m.get(best_metric, val_m["val/nll"])
+            else:
+                score = -train_m["loss/total"]  # fallback: minimise total loss
+
+            improved = score > best_score if higher_is_better else score < best_score
+            if improved:
+                best_score = score
+                best_epoch = epoch
+                is_best    = True
+                save_checkpoint(
+                    ckpt_path, epoch,
+                    encoder, zinb_dec, adj_dec, gmcm, optimizer,
+                    metrics={**(cluster_m or {}), **(val_m or {}),
+                             "epoch": epoch, best_metric: score},
+                )
+
+        # --- Logging --------------------------------------------------------
+        if epoch % log_every == 0 or epoch == total_epochs - 1 or is_best:
+            stage = "pretrain" if epoch < n_pretrain_epochs else "finetune"
+            print_epoch(epoch, total_epochs, stage, train_m, val_m, cluster_m, is_best)
+
+    # --- Final summary ------------------------------------------------------
+    print(f"\n{'═'*80}")
+    print(f"  Training complete.")
+    print(f"  Best epoch : {best_epoch}")
+    print(f"  Best {best_metric:>4s}  : {best_score:.4f}")
+    print(f"  Checkpoint : {ckpt_path}")
+    print(f"{'═'*80}\n")
+
+    return history

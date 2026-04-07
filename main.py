@@ -6,8 +6,8 @@ import warnings
 import torch
 import pandas as pd
 from torch_geometric.transforms import RandomLinkSplit
-from preprocessing import get_device, load_data
-from model import GMCM_VGAE
+from preprocessing import get_device, load_data,clustering_metrics
+from model1 import *
 warnings.filterwarnings("ignore")
 os.environ["OMP_NUM_THREADS"] = "15"
 
@@ -20,11 +20,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Data ───
-    p.add_argument("--dataset",      type=str,   default="Quake_Smart-seq2_Diaphragm",
+    p.add_argument("--dataset",      type=str,   default="Klein",
                    help="Dataset name (must match a folder under --data_path).")
     p.add_argument("--data_path",    type=str,   default=None,
                    help="Path to data folder. Defaults to ./data/<dataset>.")
-    p.add_argument("--n_top_genes",  type=int,   default=1200,
+    p.add_argument("--n_top_genes",  type=int,   default=2000,
                    help="Number of highly variable genes to select.")
     p.add_argument("--n_neighbors",  type=int,   default=5,
                    help="k for kNN graph construction.")
@@ -34,13 +34,13 @@ def parse_args() -> argparse.Namespace:
                    help="Root directory for saving results and checkpoints.")
 
     # ── Model architecture ────────────────────────────────────────────────
-    p.add_argument("--embedding_size",  type=int,   default=512,
+    p.add_argument("--embedding_size",  type=int,   default=1024,
                    help="Dimensionality of the latent space z.")
-    p.add_argument("--num_neurons",     type=int,   default=128,
+    p.add_argument("--hidden_channels",     type=int,   default=518,
                    help="Hidden size of the GCN encoder layer.")
-    p.add_argument("--gmcm_dim",        type=int,   default=32,
+    p.add_argument("--gmcm_dim",        type=int,   default=64,
                    help="Projection dimension for the GMCM copula (must be >= 2).")
-    p.add_argument("--activation",      type=str,   default="Tanh",
+    p.add_argument("--activation",      type=str,   default="ReLU",
                    choices=["ReLU", "Sigmoid", "Tanh", "Linear"],
                    help="Encoder activation function.")
     p.add_argument("--min_clamp_mean",  type=float, default=1e-5)
@@ -49,12 +49,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_clamp_dis",   type=float, default=1e4)
 
     # ── Training ──────────────────────────────────────────────────────────
-    p.add_argument("--epochs",      type=int,   default=350,
+    p.add_argument("--epochs",      type=int,   default=8000,
                    help="Maximum number of joint training epochs.")
-    p.add_argument("--lr",          type=float, default=1e-4,
+    p.add_argument("--lr",          type=float, default=1e-3,
                    help="Learning rate.")
-    p.add_argument("--wd",          type=float, default=1e-3,
+    p.add_argument("--wd",          type=float, default=1e-4,
                    help="Weight decay (L2 regularisation).")
+    p.add_argument("--dropout", type=float, default=0.),
     p.add_argument("--momentum",    type=float, default=0.9,
                    help="Momentum (used only with SGD / RMSProp).")
     p.add_argument("--optimizer",   type=str,   default="Adam",
@@ -71,7 +72,6 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args   = parse_args()
-
 
     device = get_device()
     print(f"Code running on device: {device} using {args.dataset} dataset")
@@ -112,7 +112,8 @@ def main():
     )
     train_data, _, _ = splitter(data)
 
-    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print(f"{'='*55}")
     print(f"  Config")
     print(f"{'='*55}")
@@ -120,64 +121,37 @@ def main():
         print(f"  {k:<20} : {v}")
     print(f"{'='*55}\n")
 
+    encoder = GCNEncoder(in_channels=data.x.shape[1],hidden_channels=args.hidden_channels,latent_channels=args.embedding_size)
+    zinb_dec = ZINBDecoder(latent_channels=args.embedding_size,hidden_channels=args.hidden_channels,out_channels=data.x.shape[1], dropout=args.dropout)
+    adj_dec = AdjDecoder(latent_channels=args.embedding_size,hidden_channels=args.hidden_channels,dropout=args.dropout)
+    gmcm = GMCM(latent_dim=args.embedding_size, n_clusters=n_clusters, tau=0.2)
+
+    optimizer = torch.optim.Adam(
+        list(encoder.parameters()) + list(zinb_dec.parameters()) + list(adj_dec.parameters())+ list(gmcm.parameters()),
+        lr=1e-3)
+
+    for epoch in range(args.epochs):
+        z=encoder(train_data.x, train_data.edge_index)
+        pi,mu,theta = zinb_dec(z)
+        loss_zinb=zinb_loss(train_data.x, pi,mu,theta)
+
+        z_adj = adj_dec(z)
+        loss_adj=adj_reconstruction_loss(z_adj,train_data.edge_index,train_data.x.shape[0],None)
+
+        loss_gmcm = gmcm.loss(z)
+        total_loss=loss_zinb+loss_adj+loss_gmcm
+
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+
+        if epoch % 20 == 0:
+            print(epoch, total_loss.item())
+    y_pred=gmcm.predict(z)
+    acc, ari, nmi = clustering_metrics(data.y, y_pred)
+    print(f"ACC={acc:.4f}, ARI={ari:.4f}, NMI={nmi:.4f}")
 
 
-    network = GMCM_VGAE(
-        num_neurons=args.num_neurons,
-        gmcm_dim=args.gmcm_dim,
-        num_features=data.x.shape[1],
-        embedding_size=args.embedding_size,
-        nClusters=n_clusters,
-        activation=args.activation,
-        tau_rank=args.tau_rank,
-        seed=args.seed,
-        min_clamp_dis=args.min_clamp_dis,
-        max_clamp_dis=args.max_clamp_dis,
-        min_clamp_mean=args.min_clamp_mean,
-        max_clamp_mean=args.max_clamp_mean,
-    ).to(device)
-
-    # ── Training 
-    start = time.perf_counter()
-
-    ari, nmi, acc = network.train_model(
-        train_data,
-        optimizer=args.optimizer,
-        epochs=args.epochs,
-        lr=args.lr,
-        wd=args.wd,
-        momentum=args.momentum,
-        save_path=args.save_path,
-        dataset=args.dataset,
-    )
-
-    elapsed = time.perf_counter() - start
-
-    # ── Results 
-    print(f"\n{'='*55}")
-    print(f"  Results")
-    print(f"{'='*55}")
-    print(f"  ARI  : {ari:.4f}")
-    print(f"  NMI  : {nmi:.4f}")
-    print(f"  ACC  : {acc:.4f}")
-    print(f"  Time : {elapsed:.1f}s")
-    print(f"{'='*55}\n")
-
-    # Save results to CSV
-    os.makedirs(args.save_path, exist_ok=True)
-    results = {**vars(args), "ARI": ari, "NMI": nmi, "ACC": acc,
-               "time_s": round(elapsed, 2)}
-    df = pd.DataFrame([results])
-
-    out_csv = os.path.join(args.save_path, f"{args.dataset}_results.csv")
-
-    # Append if file exists, write header only if new
-    write_header = not os.path.exists(out_csv)
-    df.to_csv(out_csv, mode='a', header=write_header, index=False)
-    print(f"Results saved to {out_csv}")
-
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

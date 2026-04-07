@@ -21,8 +21,8 @@ from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
 device = get_device()
-dataset = "worm_neuron"
-epochs_cluster = 350
+dataset = "Muraro"
+epochs_cluster = 8000
 lr_cluster = 0.001
 embedding_size = 32
 num_neurons = 64
@@ -31,7 +31,8 @@ seed = 82
 
 
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print('Using device:', device)
 
 
 class GraphConvSparse(nn.Module):
