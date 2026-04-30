@@ -15,46 +15,49 @@ from scipy.optimize import linear_sum_assignment
 import csv, os
 from torch_geometric.nn import GCNConv as gnc_encoder
 from torch import Tensor
-from typing import Tuple
-from torch_geometric.data import Data
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-import torch
-import torch.nn as nn
-from torch import Tensor
-from torch_geometric.data import Data
-from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from typing import Dict, List, Optional, Tuple
-
-import numpy as np
-from sklearn.metrics import (
-    normalized_mutual_info_score,
-    adjusted_rand_score,
-    accuracy_score,
-)
-from scipy.optimize import linear_sum_assignment
+from torch_geometric.typing import Adj
 
 
 
 class GCNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels, hidden_channels_2, latent_channels,
-                 activation=nn.ReLU(), dropout=0.0):
-        super().__init__()
-        self.activation    = activation
-        self.dropout       = nn.Dropout(p=dropout)
-        self.conv_hidden_1 = gnc_encoder(in_channels,       hidden_channels)
-        self.conv_hidden_2 = gnc_encoder(hidden_channels,   hidden_channels_2)
-        self.conv_mu       = gnc_encoder(hidden_channels_2, latent_channels)
-        self.conv_logvar   = gnc_encoder(hidden_channels_2, latent_channels)
+    """
+    Three-layer GCN encoder that outputs the parameters (mu, log-variance)
+    of a variational latent distribution.
 
-    def _encode(self, x, edge_index):
+    Args:
+        in_channels:       Dimensionality of input node features.
+        hidden_channels:   Dimensionality of the first hidden GCN layer.
+        hidden_channels_2: Dimensionality of the second hidden GCN layer.
+        latent_channels:   Dimensionality of the latent space.
+        activation:        Non-linearity applied after each convolution.
+        dropout:           Dropout probability applied after each activation (0 = disabled).
+    """
+
+    def __init__(
+        self,
+        in_channels:       int,
+        hidden_channels:   int,
+        latent_channels:   int,
+        activation:        nn.Module = nn.ReLU(),
+        dropout:           float     = 0.0,
+    ) -> None:
+        super().__init__()
+
+        self.activation = activation
+        self.dropout    = nn.Dropout(p=dropout)
+
+        self.conv_hidden_1 = gnc_encoder(in_channels,       hidden_channels,cached=True, add_self_loops=False)
+        self.conv_hidden_2 = gnc_encoder(hidden_channels,   hidden_channels,cached=True, add_self_loops=False)
+        self.conv_encoder       = gnc_encoder(hidden_channels, latent_channels,cached=True, add_self_loops=False)
+
+    def _encode(self, x: Tensor, edge_index: Adj) -> Tensor:
         h = self.dropout(self.activation(self.conv_hidden_1(x, edge_index)))
         h = self.dropout(self.activation(self.conv_hidden_2(h, edge_index)))
         return h
 
-    def forward(self, x, edge_index) :
+    def forward(self, x: Tensor, edge_index: Adj) :
         h = self._encode(x, edge_index)
-        return self.conv_mu(h, edge_index), self.conv_logvar(h, edge_index)
+        return self.conv_encoder(h, edge_index)
 
 
 class ZINBDecoder(nn.Module):
@@ -261,794 +264,170 @@ def adj_reconstruction_loss(
     return loss
 
 
-class GaussianMixtureCopulaModule(nn.Module):
+
+class GMCM(nn.Module):
     """
-    Gaussian Mixture Copula Model (GMCM) for unsupervised clustering in
-    latent space.
+    Differentiable approximation of a Gaussian Mixture Copula Model.
 
-    The copula separates the modelling of marginal distributions from the
-    modelling of inter-dimensional dependence structure:
+    Main idea:
+    - Replace hard empirical rank transform with a smooth empirical CDF
+      based on pairwise sigmoids.
+    - Transform smooth CDF values to Gaussian normal scores.
+    - Fit a Gaussian mixture in that transformed space.
 
-        1. Marginal transform (Sklar's theorem):
-               z  →  u = Φ⁻¹( F̂(z) )
-           Each dimension of z is mapped through its empirical CDF F̂ and
-           then through the probit transform Φ⁻¹ (inverse standard normal
-           CDF), yielding pseudo-normal scores u whose marginals are
-           standard normal. This removes any marginal-specific shape and
-           leaves only the dependency structure.
-
-        2. GMM in copula space:
-           A K-component Gaussian mixture is fitted on u. Each component
-           has a learnable mean μ_k and a full (lower-triangular) Cholesky
-           factor L_k that parameterises its covariance Σ_k = L_k L_kᵀ.
-           Full covariance captures arbitrary linear dependencies between
-           dimensions inside each cluster.
-
-        3. Soft responsibilities:
-               r_ik = π_k · p(u_i | k)  /  Σ_j π_j · p(u_i | j)
-           where p(u|k) = N(u; μ_k, L_k L_kᵀ).
-
-    Args:
-        latent_channels:  Dimensionality of z (and u).
-        num_clusters:     Number of Gaussian copula components K.
-        eps:              Diagonal jitter added to Cholesky for stability.
+    This allows gradients to flow back into z.
     """
 
     def __init__(
         self,
-        latent_channels: int,
-        num_clusters:    int,
-        eps:             float = 1e-4,
+        latent_dim: int,
+        n_clusters: int,
+        reg_covar: float = 1e-4,
+        tau: float = 0.1,
+        eps: float = 1e-6,
     ) -> None:
         super().__init__()
-
-        self.K   = num_clusters
-        self.D   = latent_channels
+        self.K = n_clusters
+        self.D = latent_dim
+        self.reg_covar = reg_covar
+        self.tau = tau
         self.eps = eps
 
-        # --- learnable GMM parameters in copula space -------------------------
-        self.mu        = nn.Parameter(torch.randn(num_clusters, latent_channels) * 0.1)
-        self.logits_pi = nn.Parameter(torch.zeros(num_clusters))
+        self.log_pi = nn.Parameter(torch.zeros(n_clusters))
+        self.mu = nn.Parameter(torch.randn(n_clusters, latent_dim) * 0.1)
 
-        # Lower-triangular Cholesky factors L_k stored as flat vectors.
-        # tril_indices gives positions of the D*(D+1)/2 lower-tri entries.
-        n_tril = latent_channels * (latent_channels + 1) // 2
-
-        rows, cols = torch.tril_indices(latent_channels, latent_channels)
-        L_init = (
-            torch.eye(latent_channels)
-            .unsqueeze(0)
-            .expand(num_clusters, -1, -1)
-            .reshape(num_clusters, latent_channels, latent_channels)
-        )
-        self.L_flat = nn.Parameter(L_init[:, rows, cols].clone())  # index with plain variables
-
-        self.register_buffer("tril_rows", rows)
-        self.register_buffer("tril_cols", cols)
-
-    # ------------------------------------------------------------------
-    # Cholesky reconstruction
-    # ------------------------------------------------------------------
-
-    def _get_cholesky(self) -> Tensor:
-        """
-        Reconstructs (K, D, D) lower-triangular Cholesky matrices from
-        L_flat. Diagonal entries are passed through softplus to ensure
-        they are strictly positive (required for valid Cholesky factor).
-        """
-        L = torch.zeros(self.K, self.D, self.D, device=self.mu.device)
-        L[:, self.tril_rows, self.tril_cols] = self.L_flat
-
-        # softplus on diagonal entries ensures Σ_k = L_k L_kᵀ is PSD
-        diag_idx = torch.arange(self.D, device=self.mu.device)
-        L[:, diag_idx, diag_idx] = F.softplus(L[:, diag_idx, diag_idx]) + self.eps
-        return L                                               # (K, D, D)
-
-    # ------------------------------------------------------------------
-    # Marginal transform  z → u
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _empirical_cdf(z: Tensor) -> Tensor:
-        """
-        Computes per-dimension empirical CDF values (ranks / N).
-        Uses mid-ranks to avoid boundary values of exactly 0 or 1.
-
-        Args:
-            z: (N, D)
-
-        Returns:
-            u_hat: (N, D)  values in (0, 1)
-        """
-        N    = z.size(0)
-        # argsort twice gives the rank of each element
-        ranks = z.argsort(dim=0).argsort(dim=0).float()       # (N, D)
-        return (ranks + 1.0) / (N + 1.0)                      # mid-rank CDF
-
-    @staticmethod
-    def _probit(p: Tensor) -> Tensor:
-        """Φ⁻¹(p) — inverse standard normal CDF via erfinv."""
-        p     = p.clamp(1e-6, 1 - 1e-6)
-        return torch.erfinv(2.0 * p - 1.0) * (2.0 ** 0.5)
-
-    def _marginal_transform(self, z: Tensor) -> Tensor:
-        """
-        Full marginal transform: z → u = Φ⁻¹( F̂(z) ).
-
-        Args:
-            z: (N, D)
-
-        Returns:
-            u: (N, D)  pseudo-normal copula scores
-        """
-        cdf = self._empirical_cdf(z)
-        return self._probit(cdf)
-
-    # ------------------------------------------------------------------
-    # GMM log-likelihood in copula space
-    # ------------------------------------------------------------------
-
-    def _log_component_density(self, u: Tensor) -> Tensor:
-        """
-        Log-likelihood of u under each Gaussian component using the
-        Cholesky parameterisation for numerical efficiency:
-
-            log N(u; μ_k, L_k L_kᵀ) =
-                -D/2 log(2π)
-                - Σ_d log L_k[d,d]          ← log|Σ|/2 via Cholesky
-                - 1/2 ‖L_k⁻¹(u - μ_k)‖²   ← Mahalanobis via triangular solve
-
-        Args:
-            u: (N, D)
-
-        Returns:
-            log_p: (N, K)
-        """
-        L       = self._get_cholesky()                        # (K, D, D)
-        diff    = u.unsqueeze(1) - self.mu.unsqueeze(0)       # (N, K, D)
-
-        # Triangular solve: v_ik = L_k⁻¹ (u_i - μ_k)
-        # torch.linalg.solve_triangular expects (..., D, D), (..., D, 1)
-        diff_t  = diff.unsqueeze(-1)                          # (N, K, D, 1)
-        L_exp   = L.unsqueeze(0).expand(u.size(0), -1, -1, -1)  # (N, K, D, D)
-        v       = torch.linalg.solve_triangular(
-            L_exp, diff_t, upper=False
-        ).squeeze(-1)                                         # (N, K, D)
-
-        # log|Σ_k|/2 = Σ_d log L_k[d,d]
-        diag_idx   = torch.arange(self.D, device=u.device)
-        log_det    = L[:, diag_idx, diag_idx].log().sum(dim=-1)  # (K,)
-
-        mahalanobis = 0.5 * v.pow(2).sum(dim=-1)             # (N, K)
-        log_2pi     = 0.5 * self.D * torch.log(
-            torch.tensor(2 * torch.pi, device=u.device)
+        # raw lower-triangular factors for covariance
+        self.L_raw = nn.Parameter(
+            torch.eye(latent_dim).unsqueeze(0).repeat(n_clusters, 1, 1)
         )
 
-        return -log_2pi - log_det.unsqueeze(0) - mahalanobis  # (N, K)
-
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
-
-    def forward(self, z: Tensor) -> Tuple[Tensor, Tensor]:
+    def _cholesky(self) -> Tensor:
         """
-        Args:
-            z: (N, D) latent node embeddings.
-
-        Returns:
-            r:      Soft responsibilities (N, K), each row sums to 1.
-            log_px: Per-node log marginal likelihood (N,) for the NLL loss.
+        Build valid lower-triangular Cholesky factors.
         """
-        u        = self._marginal_transform(z)                # (N, D)
-        log_pi   = F.log_softmax(self.logits_pi, dim=0)       # (K,)
-        log_p_k  = self._log_component_density(u)             # (N, K)
-        log_w_p  = log_pi.unsqueeze(0) + log_p_k             # (N, K)
+        L = torch.tril(self.L_raw)
+        idx = torch.arange(self.D, device=L.device)
+        L[:, idx, idx] = F.softplus(L[:, idx, idx]) + self.reg_covar
+        return L
 
-        log_px   = torch.logsumexp(log_w_p, dim=-1)           # (N,)  log Σ_k π_k p(u|k)
-        r        = (log_w_p - log_px.unsqueeze(1)).exp()      # (N, K)  responsibilities
+    def _smooth_empirical_cdf(self, z: Tensor) -> Tensor:
+        """
+        Differentiable approximation of the empirical CDF.
 
-        return r, log_px
+        For each dimension independently:
+            F_hat(z_i) = mean_j sigmoid((z_i - z_j) / tau)
+
+        z: (N, D)
+        returns u: (N, D) in (0,1)
+        """
+        # pairwise differences per dimension
+        # diff[n, m, d] = z[n, d] - z[m, d]
+        diff = z.unsqueeze(1) - z.unsqueeze(0)   # (N, N, D)
+
+        # smooth indicator I[z_j <= z_i]
+        cdf_vals = torch.sigmoid(diff / self.tau).mean(dim=1)  # (N, D)
+
+        # avoid exact 0 or 1 before inverse Gaussian CDF
+        u = cdf_vals.clamp(self.eps, 1.0 - self.eps)
+        return u
+
+    def _gaussian_ppf(self, u: Tensor) -> Tensor:
+        """
+        Approximate inverse standard normal CDF:
+            Phi^{-1}(u) = sqrt(2) * erfinv(2u - 1)
+        """
+        return math.sqrt(2.0) * torch.erfinv(2.0 * u - 1.0)
+
+    def _to_normal_scores(self, z: Tensor) -> Tensor:
+        """
+        Differentiable copula transform.
+        """
+        u = self._smooth_empirical_cdf(z)
+        v = self._gaussian_ppf(u)
+        return v
+
+    def _log_component_density(self, v: Tensor) -> Tensor:
+        """
+        Log-density of each Gaussian component.
+
+        v: (N, D)
+        returns: (N, K)
+        """
+        L = self._cholesky()                                # (K, D, D)
+        diff = v.unsqueeze(1) - self.mu.unsqueeze(0)       # (N, K, D)
+
+        # reshape for triangular solve
+        # solve L_k * a = diff_{n,k}
+        rhs = diff.permute(1, 2, 0)                        # (K, D, N)
+        alpha = torch.linalg.solve_triangular(
+            L, rhs, upper=False
+        )                                                  # (K, D, N)
+
+        maha = (alpha ** 2).sum(dim=1).T                   # (N, K)
+        log_det = torch.log(torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=-1)  # (K,)
+
+        return -0.5 * maha - log_det - 0.5 * self.D * math.log(2.0 * math.pi)
+
+    def logits(self, z: Tensor) -> Tensor:
+        """
+        Unnormalized log posterior scores: (N, K)
+        """
+        v = self._to_normal_scores(z)
+        log_pi = F.log_softmax(self.log_pi, dim=0)
+        return log_pi + self._log_component_density(v)
+
+    def loss(self, z: Tensor) -> Tensor:
+        """
+        Unsupervised negative log-likelihood.
+        """
+        logits = self.logits(z)
+        return -torch.logsumexp(logits, dim=1).mean()
+
+    def soft_assign(self, z: Tensor) -> Tensor:
+        """
+        Posterior responsibilities: (N, K)
+        """
+        return F.softmax(self.logits(z), dim=1)
 
     @torch.no_grad()
     def predict(self, z: Tensor) -> Tensor:
-        """Hard cluster labels via argmax over responsibilities."""
-        r, _ = self.forward(z)
-        return r.argmax(dim=-1)                               # (N,)
-
-    @torch.no_grad()
-    def initialize_means(self, z: Tensor) -> None:
         """
-        Warm-starts cluster means using K-Means++ on the copula-transformed
-        scores u. Always call before training to avoid degenerate initialisation.
+        Hard cluster assignments: (N,)
         """
-        u       = self._marginal_transform(z)
-        centers = _kmeans_pp_init(u, self.K)
-        self.mu.data.copy_(centers)
+        return self.soft_assign(z).argmax(dim=1)
 
 
-# -----------------------------------------------------------------------
-# K-Means++ initialisation
-# -----------------------------------------------------------------------
-
-def _kmeans_pp_init(u: Tensor, K: int) -> Tensor:
-    N       = u.size(0)
-    idx     = torch.randint(N, (1,)).item()
-    centers = [u[idx].detach().cpu()]
-
-    for _ in range(1, K):
-        stacked = torch.stack(centers, dim=0)
-        dists   = torch.cdist(u.detach().cpu(), stacked).min(dim=1).values
-        probs   = dists.pow(2)
-        probs  /= probs.sum()
-        idx     = torch.multinomial(probs, 1).item()
-        centers.append(u[idx].detach().cpu())
-
-    return torch.stack(centers).to(u.device)
 
 
-# -----------------------------------------------------------------------
-# GMCM loss
-# -----------------------------------------------------------------------
 
-def gmcm_loss(
-    r:            Tensor,
-    log_px:       Tensor,
-    logits_pi:    Tensor,
-    lambda_ent:   float = 0.1,
-    lambda_prior: float = 0.01,
-) -> Tensor:
+
+
+def contrastive_loss(z: Tensor, labels: Tensor, temperature: float = 0.5) -> Tensor:
     """
-    GMCM clustering loss with three terms:
-
-    1. NLL — negative log marginal likelihood of u under the mixture.
-         Maximising this is the canonical copula model objective; it
-         jointly optimises component parameters and mixture weights.
-
-    2. Entropy regularisation — maximises H(r) across nodes to prevent
-         cluster collapse where all nodes are assigned to one component.
-
-    3. Uniform prior on π — KL(π ‖ Uniform) penalises dead components
-         whose mixture weight decays to zero, maintaining diversity.
+    Supervised contrastive loss.
+    Pulls same-cluster embeddings together, pushes different ones apart.
 
     Args:
-        r:            Soft responsibilities (N, K).
-        log_px:       Per-node log marginal likelihood (N,).
-        logits_pi:    Raw mixture weight logits (K,) from the module.
-        lambda_ent:   Weight on entropy regularisation term.
-        lambda_prior: Weight on mixture prior regularisation term.
+        z:           Cell embeddings (N, D) — L2-normalised internally.
+        labels:      Cluster assignments (N,) from gmcm.predict().
+        temperature: Scaling factor for similarity sharpness.
 
     Returns:
-        Scalar total loss.
+        Scalar loss.
     """
-    # 1. NLL: minimise negative log-likelihood --------------------------------
-    nll = -log_px.mean()
+    z     = F.normalize(z, dim=1)                          # (N, D)
+    sim   = (z @ z.T) / temperature                        # (N, N)
 
-    # 2. Entropy regularisation: maximise H(r) → minimise -H(r) --------------
-    entropy = -(r * r.log().clamp(min=-1e8)).sum(dim=-1).mean()
+    # Mask: 1 where i,j share the same label (excluding diagonal)
+    eq    = labels.unsqueeze(0) == labels.unsqueeze(1)     # (N, N)
+    mask  = eq & ~torch.eye(len(labels), dtype=torch.bool, device=z.device)
 
-    # 3. Uniform prior on π: KL(π ‖ Uniform(K)) ------------------------------
-    K           = logits_pi.size(0)
-    log_pi      = F.log_softmax(logits_pi, dim=0)
-    log_uniform = torch.full_like(log_pi, -torch.log(torch.tensor(K, dtype=log_pi.dtype)))
-    prior_kl    = F.kl_div(log_pi, log_uniform.exp(), reduction="sum")
+    # Log-softmax over all negatives
+    logits     = sim - sim.diagonal().unsqueeze(1)         # anchor each row
+    log_prob   = logits - torch.logsumexp(sim, dim=1, keepdim=True)
 
-    return nll - lambda_ent * entropy + lambda_prior * prior_kl
+    # Mean over positive pairs only
+    n_pos = mask.sum(1).clamp(min=1)
+    loss  = -(log_prob * mask).sum(1) / n_pos
 
-
-
-
-
-# -----------------------------------------------------------------------
-# Reparameterisation trick
-# -----------------------------------------------------------------------
-
-def reparameterise(mu: Tensor, log_var: Tensor) -> Tensor:
-    """
-    z = μ + ε·σ,  ε ~ N(0, I)
-
-    During eval the encoder is deterministic (use mu directly).
-    During training the stochastic sample enables the ELBO gradient.
-    """
-    std = (0.5 * log_var).exp()
-    eps = torch.randn_like(std)
-    return mu + eps * std
-
-
-# -----------------------------------------------------------------------
-# KL divergence  KL( q(z|x) ‖ N(0,I) )
-# -----------------------------------------------------------------------
-
-def kl_divergence(mu: Tensor, log_var: Tensor) -> Tensor:
-    """
-    Analytical KL between a diagonal Gaussian q(z|x) = N(μ, diag(σ²))
-    and the standard normal prior p(z) = N(0, I):
-
-        KL = -½ Σ_d ( 1 + log σ²_d - μ²_d - σ²_d )
-
-    Averaged over nodes and latent dimensions.
-    """
-    return -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean()
-
-
-# -----------------------------------------------------------------------
-# Loss weights
-# -----------------------------------------------------------------------
-
-class LossWeights:
-    zinb:    float = 1.0
-    adj:     float = 1.0
-    kl:      float = 1e-3   # start small — KL tends to dominate early
-    gmcm:    float = 0.1
-
-    # KL annealing: ramp from 0 → kl_max over the pre-train phase
-    kl_ramp_start:   int = 0
-    kl_ramp_end:     int = 50
-
-    # GMCM annealing: only active during fine-tuning
-    gmcm_ramp_start: int = 100
-    gmcm_ramp_end:   int = 300
-
-
-# -----------------------------------------------------------------------
-# Annealing helper
-# -----------------------------------------------------------------------
-
-def linear_anneal(epoch: int, start: int, end: int, max_val: float) -> float:
-    """Linearly ramps a weight from 0 to max_val between start and end."""
-    if epoch < start:
-        return 0.0
-    if epoch >= end:
-        return max_val
-    return max_val * (epoch - start) / (end - start)
-
-
-# -----------------------------------------------------------------------
-# Single training step
-# -----------------------------------------------------------------------
-
-def train_step(
-    data:       Data,
-    encoder:    nn.Module,
-    zinb_dec:   nn.Module,
-    adj_dec:    nn.Module,
-    gmcm:       nn.Module,
-    optimizer:  torch.optim.Optimizer,
-    weights:    LossWeights,
-    epoch:      int,
-    device:     torch.device,
-) :
-
-    encoder.train()
-    zinb_dec.train()
-    adj_dec.train()
-    gmcm.train()
-    optimizer.zero_grad()
-
-    x          = data.x.to(device)
-    edge_index = data.edge_index.to(device)
-    N          = x.size(0)
-
-    # --- 1. Encode (VGAE) ----------------------------------------------------
-    # GCNEncoder now returns (mu, log_var) — see updated encoder below
-    mu, log_var = encoder(x, edge_index)              # (N, D), (N, D)
-    z           = reparameterise(mu, log_var)         # (N, D)  stochastic sample
-
-    # --- 2. KL divergence (annealed) -----------------------------------------
-    loss_kl  = kl_divergence(mu, log_var)
-    w_kl     = linear_anneal(epoch, weights.kl_ramp_start, weights.kl_ramp_end, weights.kl)
-
-    # --- 3. ZINB feature reconstruction loss ---------------------------------
-    pi, mu_zinb, theta = zinb_dec(z)
-    loss_zinb          = zinb_loss(x, pi, mu_zinb, theta)
-
-    # --- 4. Adjacency reconstruction loss ------------------------------------
-    adj_hat  = adj_dec(z)
-    loss_adj = adj_reconstruction_loss(adj_hat, edge_index, N,None)
-
-    # --- 5. GMCM clustering loss (annealed) ----------------------------------
-    r, log_px = gmcm(z)
-    loss_gmcm = gmcm_loss(r, log_px, gmcm.logits_pi)
-    w_gmcm    = linear_anneal(epoch, weights.gmcm_ramp_start, weights.gmcm_ramp_end, weights.gmcm)
-
-    # --- 6. Total ELBO-style objective ---------------------------------------
-    #
-    #   L = E[log p(x|z)]          ← ZINB reconstruction
-    #     + E[log p(A|z)]          ← adjacency reconstruction
-    #     - KL(q(z|x) ‖ p(z))     ← VAE regularisation
-    #     + λ_gmcm · L_gmcm       ← clustering (annealed)
-    #
-    loss = (
-        weights.zinb * loss_zinb
-        + weights.adj * loss_adj
-        + w_kl        * loss_kl
-        + w_gmcm      * loss_gmcm
-    )
-
-    loss.backward()
-    nn.utils.clip_grad_norm_(
-        list(encoder.parameters())
-        + list(zinb_dec.parameters())
-        + list(adj_dec.parameters())
-        + list(gmcm.parameters()),
-        max_norm=1.0,
-    )
-    optimizer.step()
-
-    return {
-        "loss/total": loss.item(),
-        "loss/zinb":  loss_zinb.item(),
-        "loss/adj":   loss_adj.item(),
-        "loss/kl":    loss_kl.item(),
-        "loss/gmcm":  loss_gmcm.item(),
-        "w/kl":       w_kl,
-        "w/gmcm":     w_gmcm,
-    }
-
-
-# -----------------------------------------------------------------------
-# Evaluation step
-# -----------------------------------------------------------------------
-
-@torch.no_grad()
-def eval_step(
-    data:     Data,
-    encoder:  nn.Module,
-    zinb_dec: nn.Module,
-    adj_dec:  nn.Module,
-    gmcm:     nn.Module,
-    device:   torch.device,
-) :
-
-    encoder.eval()
-    zinb_dec.eval()
-    adj_dec.eval()
-    gmcm.eval()
-
-    x          = data.x.to(device)
-    edge_index = data.edge_index.to(device)
-    N          = x.size(0)
-
-    # Use mu directly at eval time — deterministic, lower variance estimate
-    mu, log_var      = encoder(x, edge_index)
-    z                = mu
-
-    pi, mu_zinb, theta = zinb_dec(z)
-    adj_hat            = adj_dec(z)
-    r, log_px          = gmcm(z)
-
-    return {
-        "val/zinb": zinb_loss(x, pi, mu_zinb, theta).item(),
-        "val/adj":  adj_reconstruction_loss(adj_hat, edge_index, N,None).item(),
-        "val/kl":   kl_divergence(mu, log_var).item(),
-        "val/gmcm": gmcm_loss(r, log_px, gmcm.logits_pi).item(),
-        "val/nll":  (-log_px.mean()).item(),
-    }
-
-
-
-
-# -----------------------------------------------------------------------
-# Cluster accuracy via Hungarian algorithm
-# -----------------------------------------------------------------------
-
-def cluster_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """
-    Computes clustering accuracy by solving the optimal label assignment
-    between predicted cluster indices and true class labels using the
-    Hungarian algorithm.
-
-    A direct accuracy_score(y_true, y_pred) would be wrong because
-    cluster index 0 may correspond to true class 3 — the Hungarian
-    method finds the permutation of predicted labels that maximises
-    agreement with ground truth.
-
-    Args:
-        y_true: Ground-truth integer labels (N,).
-        y_pred: Predicted cluster indices   (N,).
-
-    Returns:
-        Accuracy in [0, 1].
-    """
-    assert y_true.shape == y_pred.shape
-    K = max(y_true.max(), y_pred.max()) + 1
-
-    # Build confusion matrix C where C[i,j] = # nodes with pred=i, true=j
-    C = np.zeros((K, K), dtype=np.int64)
-    for p, t in zip(y_pred, y_true):
-        C[p, t] += 1
-
-    # Hungarian algorithm finds the assignment that maximises the trace
-    row_ind, col_ind = linear_sum_assignment(-C)
-    return C[row_ind, col_ind].sum() / y_true.shape[0]
-
-
-# -----------------------------------------------------------------------
-# Clustering metrics
-# -----------------------------------------------------------------------
-
-@torch.no_grad()
-def compute_metrics(
-    encoder:  nn.Module,
-    gmcm:     nn.Module,
-    data:     Data,
-    y_true:   np.ndarray,
-    device:   torch.device,
-) -> Dict[str, float]:
-    """
-    Computes ACC, NMI, and ARI against ground-truth labels.
-
-    Args:
-        encoder:  Trained GCNEncoder (VGAE — returns mu, log_var).
-        gmcm:     Trained GaussianMixtureCopulaModule.
-        data:     PyG Data object.
-        y_true:   Ground-truth integer class labels (N,).
-        device:   Target device.
-
-    Returns:
-        Dict with keys acc, nmi, ari.
-    """
-    encoder.eval()
-    gmcm.eval()
-
-    mu, _  = encoder(data.x.to(device), data.edge_index.to(device))
-    r, _   = gmcm(mu)
-    y_pred = r.argmax(dim=-1).cpu().numpy()
-
-    return {
-        "acc": cluster_accuracy(y_true, y_pred),
-        "nmi": normalized_mutual_info_score(y_true, y_pred, average_method="arithmetic"),
-        "ari": adjusted_rand_score(y_true, y_pred),
-    }
-
-
-# -----------------------------------------------------------------------
-# Checkpoint helpers
-# -----------------------------------------------------------------------
-
-def save_checkpoint(
-    path:     str,
-    epoch:    int,
-    encoder:  nn.Module,
-    zinb_dec: nn.Module,
-    adj_dec:  nn.Module,
-    gmcm:     nn.Module,
-    optimizer: torch.optim.Optimizer,
-    metrics:  Dict[str, float],
-) -> None:
-    torch.save({
-        "epoch":          epoch,
-        "encoder":        encoder.state_dict(),
-        "zinb_dec":       zinb_dec.state_dict(),
-        "adj_dec":        adj_dec.state_dict(),
-        "gmcm":           gmcm.state_dict(),
-        "optimizer":      optimizer.state_dict(),
-        "metrics":        metrics,
-    }, path)
-
-
-def load_checkpoint(
-    path:     str,
-    encoder:  nn.Module,
-    zinb_dec: nn.Module,
-    adj_dec:  nn.Module,
-    gmcm:     nn.Module,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-) -> Dict:
-    ckpt = torch.load(path, map_location="cpu")
-    encoder.load_state_dict(ckpt["encoder"])
-    zinb_dec.load_state_dict(ckpt["zinb_dec"])
-    adj_dec.load_state_dict(ckpt["adj_dec"])
-    gmcm.load_state_dict(ckpt["gmcm"])
-    if optimizer is not None:
-        optimizer.load_state_dict(ckpt["optimizer"])
-    return ckpt
-
-
-# -----------------------------------------------------------------------
-# Pretty printer
-# -----------------------------------------------------------------------
-
-def print_epoch(
-    epoch:       int,
-    total:       int,
-    stage:       str,
-    train_m:     Dict[str, float],
-    val_m:       Optional[Dict[str, float]],
-    cluster_m:   Optional[Dict[str, float]],
-    is_best:     bool,
-) -> None:
-    tag  = "★ BEST" if is_best else "      "
-    sep  = "─" * 80
-
-    print(sep)
-    print(
-        f"{tag}  [{stage.upper()}]  epoch {epoch:>4d}/{total}"
-        f"   total={train_m['loss/total']:.4f}"
-        f"   zinb={train_m['loss/zinb']:.4f}"
-        f"   adj={train_m['loss/adj']:.4f}"
-        f"   kl={train_m['loss/kl']:.4f}(w={train_m['w/kl']:.3f})"
-        f"   gmcm={train_m['loss/gmcm']:.4f}(w={train_m['w/gmcm']:.3f})"
-    )
-    if val_m:
-        print(
-            f"         [VAL]"
-            f"   zinb={val_m['val/zinb']:.4f}"
-            f"   adj={val_m['val/adj']:.4f}"
-            f"   kl={val_m['val/kl']:.4f}"
-            f"   gmcm={val_m['val/gmcm']:.4f}"
-            f"   nll={val_m['val/nll']:.4f}"
-        )
-    if cluster_m:
-        print(
-            f"         [CLUST]"
-            f"   ACC={cluster_m['acc']:.4f}"
-            f"   NMI={cluster_m['nmi']:.4f}"
-            f"   ARI={cluster_m['ari']:.4f}"
-        )
-
-
-# -----------------------------------------------------------------------
-# Full training loop
-# -----------------------------------------------------------------------
-
-def train(
-    data:              Data,
-    encoder:           nn.Module,
-    zinb_dec:          nn.Module,
-    adj_dec:           nn.Module,
-    gmcm:              nn.Module,
-    y_true:            Optional[np.ndarray]  = None,
-    n_pretrain_epochs: int                   = 250,
-    n_finetune_epochs: int                   = 800,
-    lr:                float                 = 1e-4,
-    weight_decay:      float                 = 1e-4,
-    device:            Optional[torch.device] = None,
-    val_data:          Optional[Data]        = None,
-    log_every:         int                   = 10,
-    ckpt_path:         str                   = "best_model.pt",
-    best_metric:       str                   = "nmi",   # acc | nmi | ari | val/nll
-) -> Dict[str, List]:
-    """
-    Two-stage VGAE training with checkpointing and clustering metrics.
-
-    Best model selection:
-        If y_true is provided, best model is selected by the clustering
-        metric specified in best_metric (acc / nmi / ari), evaluated on
-        the training graph (standard protocol for unsupervised graph
-        clustering benchmarks where no held-out labels exist).
-
-        If y_true is None, best model falls back to minimising val/nll
-        (or total train loss when val_data is also None).
-
-    Args:
-        data:              Training PyG Data object.
-        encoder:           GCNEncoder instance.
-        zinb_dec:          ZINBDecoder instance.
-        adj_dec:           AdjDecoder instance.
-        gmcm:              GaussianMixtureCopulaModule instance.
-        y_true:            Ground-truth integer labels (N,) for ACC/NMI/ARI.
-        n_pretrain_epochs: Reconstruction-only warm-up epochs.
-        n_finetune_epochs: Joint fine-tuning epochs.
-        lr:                Learning rate.
-        weight_decay:      AdamW L2 penalty.
-        device:            Target device (auto if None).
-        val_data:          Optional held-out graph for validation losses.
-        log_every:         Print every N epochs.
-        ckpt_path:         Where to save the best checkpoint.
-        best_metric:       Metric used to decide "best" model.
-    """
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    encoder.to(device)
-    zinb_dec.to(device)
-    adj_dec.to(device)
-    gmcm.to(device)
-
-    optimizer = Adam(
-        list(encoder.parameters())
-        + list(zinb_dec.parameters())
-        + list(adj_dec.parameters())
-        + list(gmcm.parameters()),
-        lr=lr,
-        weight_decay=weight_decay,
-    )
-    scheduler = ReduceLROnPlateau(optimizer, patience=20, factor=0.5, verbose=False)
-
-    weights                  = LossWeights()
-    weights.kl_ramp_end      = n_pretrain_epochs
-    weights.gmcm_ramp_start  = n_pretrain_epochs
-    weights.gmcm_ramp_end    = n_pretrain_epochs + n_finetune_epochs // 2
-
-    history: Dict[str, List] = {k: [] for k in [
-        "loss/total", "loss/zinb", "loss/adj", "loss/kl",  "loss/gmcm",
-        "val/zinb",   "val/adj",   "val/kl",   "val/gmcm", "val/nll",
-        "acc",        "nmi",       "ari",
-    ]}
-
-    total_epochs = n_pretrain_epochs + n_finetune_epochs
-
-    # higher-is-better metrics; lower-is-better otherwise
-    higher_is_better = best_metric in ("acc", "nmi", "ari")
-    best_score       = -np.inf if higher_is_better else np.inf
-    best_epoch       = 0
-
-    print(f"\n{'═'*80}")
-    print(f"  Training   device={device}   pretrain={n_pretrain_epochs}   finetune={n_finetune_epochs}")
-    print(f"  Best-model criterion: {best_metric}   checkpoint → {ckpt_path}")
-    print(f"{'═'*80}\n")
-
-    for epoch in range(total_epochs):
-
-        # --- GMCM warm start at stage transition ----------------------------
-        if epoch == n_pretrain_epochs:
-            print(f"\n{'─'*80}")
-            print("  Pre-training complete — initialising GMCM via K-Means++ on μ")
-            with torch.no_grad():
-                encoder.eval()
-                mu, _ = encoder(data.x.to(device), data.edge_index.to(device))
-                gmcm.initialize_means(mu)
-            print("  Beginning joint fine-tuning")
-            print(f"{'─'*80}\n")
-
-        # --- Training step --------------------------------------------------
-        train_m = train_step(
-            data, encoder, zinb_dec, adj_dec, gmcm,
-            optimizer, weights, epoch, device,
-        )
-        for k, v in train_m.items():
-            if k in history:
-                history[k].append(v)
-
-        # --- Validation losses ----------------------------------------------
-        val_m = None
-        if val_data is not None:
-            val_m = eval_step(val_data, encoder, zinb_dec, adj_dec, gmcm, device)
-            for k, v in val_m.items():
-                history[k].append(v)
-            monitor = val_m["val/zinb"] + val_m["val/adj"] + val_m["val/kl"]
-            scheduler.step(monitor)
-
-        # --- Clustering metrics (only during fine-tuning) -------------------
-        cluster_m = None
-        in_finetune = epoch >= n_pretrain_epochs
-        if in_finetune and y_true is not None:
-            cluster_m = compute_metrics(encoder, gmcm, data, y_true, device)
-            for k, v in cluster_m.items():
-                history[k].append(v)
-
-        # --- Best model selection -------------------------------------------
-        is_best = False
-        if in_finetune:
-            if best_metric in ("acc", "nmi", "ari") and cluster_m is not None:
-                score = cluster_m[best_metric]
-            elif val_m is not None:
-                score = val_m.get(best_metric, val_m["val/nll"])
-            else:
-                score = -train_m["loss/total"]  # fallback: minimise total loss
-
-            improved = score > best_score if higher_is_better else score < best_score
-            if improved:
-                best_score = score
-                best_epoch = epoch
-                is_best    = True
-                save_checkpoint(
-                    ckpt_path, epoch,
-                    encoder, zinb_dec, adj_dec, gmcm, optimizer,
-                    metrics={**(cluster_m or {}), **(val_m or {}),
-                             "epoch": epoch, best_metric: score},
-                )
-
-        # --- Logging --------------------------------------------------------
-        if epoch % log_every == 0 or epoch == total_epochs - 1 or is_best:
-            stage = "pretrain" if epoch < n_pretrain_epochs else "finetune"
-            print_epoch(epoch, total_epochs, stage, train_m, val_m, cluster_m, is_best)
-
-    # --- Final summary ------------------------------------------------------
-    print(f"\n{'═'*80}")
-    print(f"  Training complete.")
-    print(f"  Best epoch : {best_epoch}")
-    print(f"  Best {best_metric:>4s}  : {best_score:.4f}")
-    print(f"  Checkpoint : {ckpt_path}")
-    print(f"{'═'*80}\n")
-
-    return history
+    return loss.mean()

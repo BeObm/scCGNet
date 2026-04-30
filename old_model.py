@@ -7,6 +7,7 @@ import torch
 import scipy.sparse as sp
 from preprocessing import load_data, sparse_to_tuple, preprocess_graph
 import time
+from preprocessing2 import *
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -21,8 +22,8 @@ from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
 device = get_device()
-dataset = "Muraro"
-epochs_cluster = 8000
+dataset = "zeisel"
+epochs_cluster = 800
 lr_cluster = 0.001
 embedding_size = 32
 num_neurons = 64
@@ -389,7 +390,8 @@ class clustering_metrics():
 
 def main():
     save_path = "./results/"
-
+    os.makedirs(save_path, exist_ok=True)
+    os.makedirs(save_path + '/' + dataset, exist_ok=True)
     optimizer = "Adam"
     seed = 8
     wd = 0.01
@@ -399,29 +401,31 @@ def main():
     min_clamp_dis = 1e-4
     max_clamp_dis = 1e4
 
-    if dataset in ["baron3", "baron4"]:
-        A, X, labels,nClusters  = load_data(dataset=dataset,
-                                     data_path=f'./data/{dataset}',
-                                     n_top_genes=2000,
-                                     n_neighbors=5,
-                                     n_pcs=50)
-    else:
-      data,nClusters = load_data(dataset=dataset,
-                                     data_path=f'./data/{dataset}',
-                                     n_top_genes=2000,
-                                     n_neighbors=5,
-                                     n_pcs=50)
-      A, X, labels = extract_graph_components(data)
+    # if dataset in ["baron3", "baron4"]:
+    #     A, X, labels,nClusters  = load_data(dataset=dataset,
+    #                                  data_path=f'./data/{dataset}',
+    #                                  n_top_genes=2000,
+    #                                  n_neighbors=5,
+    #                                  n_pcs=50)
+    # else:
+    #   data,nClusters = load_data(dataset=dataset,
+    #                                  data_path=f'./data/{dataset}',
+    #                                  n_top_genes=2000,
+    #                                  n_neighbors=5,
+    #                                  n_pcs=50)
+    #   A, X, labels = extract_graph_components(data)data
     # data_dic, adata = load_h5_data(f'./dataset/{dataset}.h5ad')
     # A=data_dic['adj']
     # features=data_dic['features']
     # labels=data_dic['label']
     # nClusters = data_dic['n_classes']
     # edge_index=data_dic['edge_index']
-    print(f"The dataset has {A.shape[0]} cells, {A.shape[1]} genes and {nClusters} clusters")
+    data,A=build_dataset()
+    X=data.x
+    labels=data.y
     adj = csr_matrix(A) if not hasattr(A, 'eliminate_zeros') else A
     features = csr_matrix(X)
-
+    nClusters=save_cluster_distribution(labels)
     # Data processing
     adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape)
     adj.eliminate_zeros()
@@ -464,6 +468,8 @@ def main():
 
     print(f"Total time: {end - start:0.4f} seconds")
     print(f"Training results for {dataset} dataset: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
+    with open(save_path + dataset + '/results.txt', 'w') as f:
+        f.write(f"Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
 
 
 if __name__ == '__main__':

@@ -7,11 +7,11 @@ import torch
 import pandas as pd
 from torch_geometric.transforms import RandomLinkSplit
 from preprocessing import get_device, load_data,clustering_metrics
-from model1 import *
+from model import *
 warnings.filterwarnings("ignore")
 os.environ["OMP_NUM_THREADS"] = "15"
 
-
+device=get_device()
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Data ───
-    p.add_argument("--dataset",      type=str,   default="Klein",
+    p.add_argument("--dataset",      type=str,   default="goolam",
                    help="Dataset name (must match a folder under --data_path).")
     p.add_argument("--data_path",    type=str,   default=None,
                    help="Path to data folder. Defaults to ./data/<dataset>.")
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_clamp_dis",   type=float, default=1e4)
 
     # ── Training ──────────────────────────────────────────────────────────
-    p.add_argument("--epochs",      type=int,   default=8000,
+    p.add_argument("--epochs",      type=int,   default=800,
                    help="Maximum number of joint training epochs.")
     p.add_argument("--lr",          type=float, default=1e-3,
                    help="Learning rate.")
@@ -112,7 +112,6 @@ def main():
     )
     train_data, _, _ = splitter(data)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"{'='*55}")
     print(f"  Config")
@@ -137,9 +136,10 @@ def main():
 
         z_adj = adj_dec(z)
         loss_adj=adj_reconstruction_loss(z_adj,train_data.edge_index,train_data.x.shape[0],None)
-
+        y_pred=gmcm.predict(z)
+        l_contrastive=contrastive_loss(z,y_pred)
         loss_gmcm = gmcm.loss(z)
-        total_loss=loss_zinb+loss_adj+loss_gmcm
+        total_loss= loss_zinb + loss_adj+ 0.1*loss_gmcm + 0.1*l_contrastive
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -148,6 +148,7 @@ def main():
         if epoch % 20 == 0:
             print(epoch, total_loss.item())
     y_pred=gmcm.predict(z)
+
     acc, ari, nmi = clustering_metrics(data.y, y_pred)
     print(f"ACC={acc:.4f}, ARI={ari:.4f}, NMI={nmi:.4f}")
 
