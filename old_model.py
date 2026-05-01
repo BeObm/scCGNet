@@ -299,7 +299,13 @@ class GMCM_VGAE(nn.Module):
         return c.to(device)
 
     def predict_gmcm(self, x, nClusters, mu_c, log_sigma2_c, pi_c):
-        g = torch.log(pi_c.unsqueeze(0)) * self.gmcm_gaussian_pdfs_log(x, nClusters, mu_c, log_sigma2_c, pi_c)
+        mu_c = mu_c.to(device)
+        log_sigma2_c = log_sigma2_c.to(device)
+        pi_c = pi_c.to(device)
+
+        g = torch.log(pi_c.unsqueeze(0)) * self.gmcm_gaussian_pdfs_log(
+            x, nClusters, mu_c, log_sigma2_c, pi_c
+        )
         kappa_c = g / torch.sum(g, dim=0)
         kappa = kappa_c.detach().cpu().numpy()
         return np.argmax(kappa, axis=1)
