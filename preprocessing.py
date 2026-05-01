@@ -192,7 +192,7 @@ def get_device():
         device = torch.device("cpu")
         print("Using CPU")
 
-    return device # Just
+    return torch.device("cpu") # Just
 
 
 def clustering_metrics(y_true, y_pred):
