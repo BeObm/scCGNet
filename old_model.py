@@ -2,13 +2,13 @@ import os
 os.environ["OMP_NUM_THREADS"] = "15"
 import warnings
 warnings.filterwarnings("ignore")
-import numpy as np
 import torch
 import scipy.sparse as sp
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph
 import time
-from preprocessing2 import *
+from preprocessing import *
 import torch
+from torch_geometric.utils import to_dense_adj
+
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
@@ -22,14 +22,14 @@ from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
 device = get_device()
-dataset = "zeisel"
-epochs_cluster = 800
+dataset = "baron3"
+epochs_cluster = 350
 lr_cluster = 0.001
 embedding_size = 32
 num_neurons = 64
 activation = "ReLU"
 seed = 82
-
+data_path = f"./data/{dataset}"
 
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -342,9 +342,11 @@ class clustering_metrics():
 
     def clusteringAcc(self):
         # best mapping between true_label and predict label
-        l1 = list(set(self.true_label))
+        true_label = self.true_label
+        l1 = list(set(true_label))
         numclass1 = len(l1)
-
+        # print(f"true_label: {l1}")
+        # print(f"predicted labels: {self.pred_label}")
         l2 = list(set(self.true_label))
         numclass2 = len(l2)
 
@@ -420,12 +422,20 @@ def main():
     # labels=data_dic['label']
     # nClusters = data_dic['n_classes']
     # edge_index=data_dic['edge_index']
-    data,A=build_dataset()
+
+    data, nClusters = load_data(
+        dataset=dataset,
+        data_path=data_path,
+        n_top_genes=2000,
+        n_neighbors=5,
+        n_pcs=15,
+    )
     X=data.x
     labels=data.y
-    adj = csr_matrix(A) if not hasattr(A, 'eliminate_zeros') else A
+    A = to_dense_adj(data.edge_index)[0]  # shape: [N, N]
+    A = A.cpu().numpy()  # convert to NumPy
+    adj = csr_matrix(A)
     features = csr_matrix(X)
-    nClusters=save_cluster_distribution(labels)
     # Data processing
     adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape)
     adj.eliminate_zeros()

@@ -23,10 +23,13 @@ From: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
         tqdm \
         scanpy \
         anndata \
-        h5py
+        h5py\
+        pyreadr
 
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
     pip install torch-geometric
+    pip install keras
+    pip install tensorflow
 
 %environment
     export LC_ALL=C

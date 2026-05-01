@@ -6,10 +6,13 @@ import torch
 import scipy.sparse as sp
 from torch.utils.data import Dataset
 import os
+from sklearn import metrics
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import minmax_scale
 from dataset_utils import *
 import numpy as np
+from munkres import Munkres
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
@@ -56,7 +59,7 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
                                file=None)
         return data,n_clusters
 
-    elif dataset in ["10X_PMBC", "human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]:   #  These dataset have raw count data
+    elif dataset in ["10X_PMBC", 'lps_int2',"human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder", "Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]:   #  These dataset have raw count data
         data,n_clusters = build_pyg_graph(cell_gene_matrix=None, cell_labels=None,
                                n_top_genes=n_top_genes,
                                n_neighbors=n_neighbors,
@@ -211,15 +214,44 @@ def clustering_metrics(y_true, y_pred):
 
     # --- ACC (with Hungarian matching) ---
     def compute_acc(y_true, y_pred):
-        D = max(y_pred.max(), y_true.max()) + 1
-        w = np.zeros((D, D), dtype=np.int64)
+        y_true = y_true - np.min(y_true)
+        l1 = list(set(y_true))
+        numclass1 = len(l1)
+        l2 = list(set(y_pred))
+        numclass2 = len(l2)
+        ind = 0
+        if numclass1 != numclass2:
+            for i in l1:
+                if i in l2:
+                    pass
+                else:
+                    y_pred[ind] = i
+                    ind += 1
+        l2 = list(set(y_pred))
+        numclass2 = len(l2)
 
-        for i in range(y_pred.size):
-            w[y_pred[i], y_true[i]] += 1
+        if numclass1 != numclass2:
+            print('error')
+            return
+        cost = np.zeros((numclass1, numclass2), dtype=int)
+        for i, c1 in enumerate(l1):
+            mps = [i1 for i1, e1 in enumerate(y_true) if e1 == c1]
+            for j, c2 in enumerate(l2):
+                mps_d = [i1 for i1 in mps if y_pred[i1] == c2]
+                cost[i][j] = len(mps_d)
+        m = Munkres()
+        cost = cost.__neg__().tolist()
+        indexes = m.compute(cost)
 
-        # Hungarian algorithm
-        row_ind, col_ind = linear_sum_assignment(w.max() - w)
-        return w[row_ind, col_ind].sum() / y_pred.size
+        new_predict = np.zeros(len(y_pred))
+        for i, c in enumerate(l1):
+            c2 = l2[indexes[i][1]]
+
+            ai = [ind for ind, elm in enumerate(y_pred) if elm == c2]
+            new_predict[ai] = c
+
+        acc = metrics.accuracy_score(y_true, new_predict)
+        return acc
 
     acc = compute_acc(y_true, y_pred)
 

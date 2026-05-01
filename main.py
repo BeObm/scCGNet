@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Data ───
-    p.add_argument("--dataset",      type=str,   default="goolam",
+    p.add_argument("--dataset",      type=str,   default="lps_int2",
                    help="Dataset name (must match a folder under --data_path).")
     p.add_argument("--data_path",    type=str,   default=None,
                    help="Path to data folder. Defaults to ./data/<dataset>.")
