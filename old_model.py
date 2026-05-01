@@ -21,8 +21,9 @@ from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
 from preprocessing import *
 
+os.environ["TF_ENABLE_ONEDNN_OPTS"] ="0"
 device = get_device()
-dataset = "baron3"
+dataset = "lps_int2"
 epochs_cluster = 350
 lr_cluster = 0.001
 embedding_size = 32
@@ -32,8 +33,7 @@ seed = 82
 data_path = f"./data/{dataset}"
 
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device:', device)
+
 
 
 class GraphConvSparse(nn.Module):
@@ -309,7 +309,8 @@ class GMCM_VGAE(nn.Module):
         self.mean = self.gcn_mean(hidden, adj)
         self.logstd = self.gcn_logstddev(hidden, adj)
 
-        gaussian_noise = torch.randn(x_features.size(0), self.embedding_size)
+        # gaussian_noise = torch.randn(x_features.size(0), self.embedding_size)
+        gaussian_noise = torch.randn_like(self.mean)
         sampled_z = gaussian_noise * torch.exp(self.logstd) + self.mean
         return self.mean, self.logstd, sampled_z
 
@@ -447,19 +448,27 @@ def main():
     adj_label = adj + sp.eye(adj.shape[0])
     adj_label = sparse_to_tuple(adj_label)
 
-    def to_sparse_tensor(data):
-        indices = torch.LongTensor(data[0].T).to(device)
-        values = torch.FloatTensor(data[1]).to(device)
+    def to_sparse_tensor(data, device):
+        # always build on CPU
+        indices = torch.as_tensor(data[0].T, dtype=torch.long)
+        values = torch.as_tensor(data[1], dtype=torch.float32)
         shape = torch.Size(data[2])
-        return torch.sparse.FloatTensor(indices, values, shape).to(device)
 
-    adj_norm = to_sparse_tensor(adj_norm)
-    adj_label = to_sparse_tensor(adj_label)
-    features = to_sparse_tensor(features)
+        sparse_tensor = torch.sparse_coo_tensor(indices, values, shape).coalesce()
+
+        # move only if CUDA (MPS does not support sparse)
+        if device.type == "cuda":
+            sparse_tensor = sparse_tensor.to(device)
+
+        return sparse_tensor
+
+    adj_norm = to_sparse_tensor(adj_norm,device)
+    adj_label = to_sparse_tensor(adj_label,device)
+    features = to_sparse_tensor(features,device)
 
     weight_mask_orig = adj_label.to_dense().view(-1) == 1
     weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
-    weight_tensor_orig[weight_mask_orig] = pos_weight_orig
+    weight_tensor_orig[weight_mask_orig] = float(pos_weight_orig)
 
     print("start")
     # Start the timer

@@ -7,7 +7,7 @@ import torch
 import pandas as pd
 from torch_geometric.transforms import RandomLinkSplit
 from preprocessing import get_device, load_data,clustering_metrics
-from model import *
+from model1 import *
 warnings.filterwarnings("ignore")
 os.environ["OMP_NUM_THREADS"] = "15"
 
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Data ───
-    p.add_argument("--dataset",      type=str,   default="lps_int2",
+    p.add_argument("--dataset",      type=str,   default="Klein",
                    help="Dataset name (must match a folder under --data_path).")
     p.add_argument("--data_path",    type=str,   default=None,
                    help="Path to data folder. Defaults to ./data/<dataset>.")

@@ -20,44 +20,24 @@ from torch_geometric.typing import Adj
 
 
 class GCNEncoder(nn.Module):
-    """
-    Three-layer GCN encoder that outputs the parameters (mu, log-variance)
-    of a variational latent distribution.
-
-    Args:
-        in_channels:       Dimensionality of input node features.
-        hidden_channels:   Dimensionality of the first hidden GCN layer.
-        hidden_channels_2: Dimensionality of the second hidden GCN layer.
-        latent_channels:   Dimensionality of the latent space.
-        activation:        Non-linearity applied after each convolution.
-        dropout:           Dropout probability applied after each activation (0 = disabled).
-    """
-
-    def __init__(
-        self,
-        in_channels:       int,
-        hidden_channels:   int,
-        latent_channels:   int,
-        activation:        nn.Module = nn.ReLU(),
-        dropout:           float     = 0.0,
-    ) -> None:
+    def __init__(self, in_channels, hidden_channels, latent_channels,
+                 activation=nn.ReLU(), dropout=0.0):
         super().__init__()
+        self.activation    = activation
+        self.dropout       = nn.Dropout(p=dropout)
+        self.conv_hidden_1 = gnc_encoder(in_channels,     hidden_channels)
+        self.conv_hidden_2 = gnc_encoder(hidden_channels, hidden_channels // 2)  # derived
+        self.conv_mu       = gnc_encoder(hidden_channels // 2, latent_channels)
+        self.conv_logvar   = gnc_encoder(hidden_channels // 2, latent_channels)
 
-        self.activation = activation
-        self.dropout    = nn.Dropout(p=dropout)
-
-        self.conv_hidden_1 = gnc_encoder(in_channels,       hidden_channels,cached=True, add_self_loops=False)
-        self.conv_hidden_2 = gnc_encoder(hidden_channels,   hidden_channels,cached=True, add_self_loops=False)
-        self.conv_encoder       = gnc_encoder(hidden_channels, latent_channels,cached=True, add_self_loops=False)
-
-    def _encode(self, x: Tensor, edge_index: Adj) -> Tensor:
+    def _encode(self, x, edge_index):
         h = self.dropout(self.activation(self.conv_hidden_1(x, edge_index)))
         h = self.dropout(self.activation(self.conv_hidden_2(h, edge_index)))
         return h
 
-    def forward(self, x: Tensor, edge_index: Adj) :
+    def forward(self, x, edge_index):
         h = self._encode(x, edge_index)
-        return self.conv_encoder(h, edge_index)
+        return self.conv_mu(h, edge_index), self.conv_logvar(h, edge_index)
 
 
 class ZINBDecoder(nn.Module):
@@ -214,37 +194,17 @@ class AdjDecoder(nn.Module):
         logits  = (z_proj @ z_proj.T) / scale          # (N, N)
         return torch.sigmoid(logits)                   # Â ∈ (0, 1)
 
-
 def adj_reconstruction_loss(
     adj_hat:   Tensor,
     edge_index: Tensor,
     num_nodes:  int,
     pos_weight: Tensor,
 ) -> Tensor:
-    """
-    Weighted binary cross-entropy between the reconstructed adjacency Â
-    and the true binary adjacency A, with automatic positive-class reweighting
-    to counter the severe class imbalance in sparse graphs.
-
-    For a sparse graph with E edges on N nodes, there are only E positive
-    entries but N²-E negatives — naïve BCE would collapse to predicting all
-    zeros. The positive weight w = (N²-E)/E corrects for this.
-
-    Args:
-        adj_hat:    Predicted edge probabilities, shape (N, N) ∈ (0,1).
-        edge_index: True edges as COO index, shape (2, E).
-        num_nodes:  N — total number of nodes.
-        pos_weight: Override automatic positive weight (scalar tensor).
-                    Pass None to compute automatically from edge_index.
-
-    Returns:
-        Scalar weighted BCE loss.
-    """
-    # Build dense binary ground-truth adjacency ---------------------------------
+    # Build dense binary ground-truth adjacency
     adj_true = torch.zeros(num_nodes, num_nodes, device=adj_hat.device)
     adj_true[edge_index[0], edge_index[1]] = 1.0
 
-    # Compute positive weight from sparsity ratio if not provided ---------------
+    # Compute positive weight from sparsity ratio if not provided
     if pos_weight is None:
         num_edges    = edge_index.size(1)
         num_non_edge = num_nodes ** 2 - num_edges
@@ -254,7 +214,6 @@ def adj_reconstruction_loss(
             dtype=adj_hat.dtype,
         )
 
-    # Weighted BCE on flattened (N²,) tensors -----------------------------------
     loss = F.binary_cross_entropy_with_logits(
         input      = adj_hat.view(-1),
         target     = adj_true.view(-1),
@@ -262,7 +221,6 @@ def adj_reconstruction_loss(
         reduction  = "mean",
     )
     return loss
-
 
 
 class GMCM(nn.Module):
@@ -431,3 +389,31 @@ def contrastive_loss(z: Tensor, labels: Tensor, temperature: float = 0.5) -> Ten
     loss  = -(log_prob * mask).sum(1) / n_pos
 
     return loss.mean()
+
+def kl_divergence(mu, log_var):
+    return -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean()
+
+def augment_graph(data, edge_drop=0.2, feat_mask=0.2):
+    # randomly drop edges
+    E    = data.edge_index.size(1)
+    mask = torch.rand(E, device=data.edge_index.device) > edge_drop
+    ei   = data.edge_index[:, mask]
+
+    # randomly mask features
+    x = data.x * (torch.rand_like(data.x) > feat_mask).float()
+
+    return x, ei
+
+def nt_xent_loss(z1, z2, temperature=0.5):
+    N  = z1.size(0)
+    z1 = F.normalize(z1, dim=-1)
+    z2 = F.normalize(z2, dim=-1)
+
+    z    = torch.cat([z1, z2], dim=0)                        # (2N, D)
+    sim  = (z @ z.T) / temperature                           # (2N, 2N)
+    sim  = sim.masked_fill(torch.eye(2*N, dtype=torch.bool, device=z.device), float("-inf"))
+
+    labels = torch.cat([torch.arange(N, device=z.device) + N,
+                        torch.arange(N, device=z.device)])   # (2N,)
+
+    return F.cross_entropy(sim, labels)

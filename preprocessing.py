@@ -38,7 +38,7 @@ def load_data(dataset, data_path,n_top_genes,n_neighbors,n_pcs):
     if dataset in ["baron3","baron4"]:
         adj, features, labels_int = load_data1(dataset, data_path)
         data, n_clusters = build_pyg_data(adj, features, labels_int)
-        return adj, features, labels_int,n_clusters
+        return data, n_clusters
     if dataset in ["Klein", "Chung","YAN"]:
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
@@ -185,14 +185,14 @@ def get_device():
     if torch.cuda.is_available():
         device = torch.device("cuda")
         print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print("Using Apple MPS (Metal Performance Shaders)")
+    # elif torch.backends.mps.is_available():
+    #     device = torch.device("mps")
+    #     print("Using Apple MPS (Metal Performance Shaders)")
     else:
         device = torch.device("cpu")
         print("Using CPU")
 
-    return torch.device("cpu")  # Just
+    return device # Just
 
 
 def clustering_metrics(y_true, y_pred):
