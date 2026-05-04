@@ -23,7 +23,7 @@ from preprocessing import *
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] ="0"
 device = get_device()
-dataset = "lps_int2"
+dataset = "baron3"
 epochs_cluster = 350
 lr_cluster = 0.001
 embedding_size = 32
@@ -31,7 +31,7 @@ num_neurons = 64
 activation = "ReLU"
 seed = 82
 data_path = f"./data/{dataset}"
-
+torch.set_default_dtype(torch.float32)
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
 
 
@@ -153,7 +153,7 @@ class GMCM_VGAE(nn.Module):
         emb = emb.to(device)
 
 
-        pi = self.pi.to(device)
+        pi = self.pi.float().to(device)
         mu_c = self.mu_c.to(device)
         log_sigma2_c = self.log_sigma2_c
 
@@ -168,7 +168,7 @@ class GMCM_VGAE(nn.Module):
         yita_c = yita_c / (yita_c.sum(1).view(-1, 1))
         y_pred = self.predict_gmcm(emb, nClusters, mu_c, log_sigma2_c, pi)
         for c in range(self.nClusters):
-            log_sigma2c = torch.diagonal(log_sigma2_c[c, :]).to(device)
+            log_sigma2c = torch.diagonal(log_sigma2_c[c, :]).float().to(device)
         KL1 = 0.5 * torch.mean(torch.sum(yita_c * torch.sum(log_sigma2c.unsqueeze(0) +
                                                             torch.exp(
                                                                 z_sigma2_log.unsqueeze(1) - log_sigma2c.unsqueeze(0)) +
@@ -283,7 +283,7 @@ class GMCM_VGAE(nn.Module):
         G = []
         x = x.to(device)
         mus = mus.to(device)
-        log_sigma2s = log_sigma2s.to(device)
+        log_sigma2s = log_sigma2s.float().to(device)
         pies = pies.to(device)
         for c in range(nClusters):
             G.append(self.gmcm_gaussian_pdf_log(x, mus[c, :], torch.diagonal(log_sigma2s[c, :]), pies[c]).view(-1, 1))
@@ -300,8 +300,8 @@ class GMCM_VGAE(nn.Module):
 
     def predict_gmcm(self, x, nClusters, mu_c, log_sigma2_c, pi_c):
         mu_c = mu_c.to(device)
-        log_sigma2_c = log_sigma2_c.to(device)
-        pi_c = pi_c.to(device)
+        log_sigma2_c = log_sigma2_c.float().to(device)
+        pi_c = pi_c.float().to(device)
 
         g = torch.log(pi_c.unsqueeze(0)) * self.gmcm_gaussian_pdfs_log(
             x, nClusters, mu_c, log_sigma2_c, pi_c
