@@ -10,10 +10,10 @@ from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_devic
 import time
 
 save_path = "./results/"
-dataset = "lps_int2"
+dataset = "baron3"
 
 # Network hyperparameters
-embedding_size = 64
+embedding_size = 32
 num_neurons = 256
 activation = "Sigmoid"
 optimizer = "Adam"

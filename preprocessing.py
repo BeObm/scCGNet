@@ -84,7 +84,7 @@ def load_data(dataset, data_path, n_top_genes, n_neighbors, n_pcs):
     if dataset in ["baron3", "baron4"]:
         adj, features, labels_int= load_data1(dataset, data_path,True)
 
-        return adj, features, labels_int,14
+        return adj, torch.tensor(features), labels_int,14
     if dataset in ["Klein", "Chung", "YAN"]:
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
