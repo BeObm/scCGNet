@@ -13,8 +13,7 @@ import math
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
 save_path = "./results/"
-dataset = "baron4"
-nClusters = 14
+dataset = "Chung"
 
 
 # Network hyperparameter
@@ -32,15 +31,23 @@ max_clamp_dis=1e4
 # Clustering hyperparameters
 epochs_cluster = 350
 lr_cluster = 0.01
-
+n_top_genes=2000
+n_neighbors=15
+n_pcs=5
 # Configure the device to cuda
 # torch.set_default_tensor_type('torch.cuda.FloatTensor')
 device = torch.device("cpu")
 print(torch.cuda.is_available())
 
 
-adj, features, labels = load_data('baron3', './data/baron3', True)
-
+# adj, features, labels,nClusters = load_data('baron3', './data/baron3', True)
+adj, features, labels,nClusters = load_data(
+        dataset=dataset,
+        data_path=f"./data/{dataset}",
+        n_top_genes=n_top_genes,
+        n_neighbors=n_neighbors,
+        n_pcs=n_pcs,
+    )
 
 
 features_new = features.toarray()
