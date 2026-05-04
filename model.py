@@ -9,10 +9,10 @@ from sklearn import metrics
 from sklearn.metrics.cluster import adjusted_rand_score
 from munkres import Munkres
 from copulae.mixtures.gmc.gmc import GaussianMixtureCopula
-
+from preprocessing import get_device
 # Code below is developed and adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
-device = torch.device('cpu')
 
+device = get_device()
 
 class GraphConvSparse(nn.Module):
     def __init__(self, seed, input_dim, output_dim, adj, activation=torch.sigmoid, **kwargs):
@@ -284,7 +284,8 @@ class GMCM_VGAE(nn.Module):
         return c.to(device)
 
     def predict_gmcm(self, x, nClusters, mu_c, log_sigma2_c, pi_c):
-        g = torch.log(pi_c.unsqueeze(0)) * self.gmcm_gaussian_pdfs_log(x, nClusters, mu_c, log_sigma2_c, pi_c)
+
+        g = torch.log(pi_c.unsqueeze(0)).to(device) * self.gmcm_gaussian_pdfs_log(x, nClusters, mu_c, log_sigma2_c, pi_c).to(device)
         kappa_c = g / torch.sum(g, dim=0)
         kappa = kappa_c.detach().cpu().numpy()
         return np.argmax(kappa, axis=1)
@@ -294,7 +295,7 @@ class GMCM_VGAE(nn.Module):
         self.mean = self.gcn_mean(hidden, adj)
         self.logstd = self.gcn_logstddev(hidden, adj)
 
-        gaussian_noise = torch.randn(x_features.size(0), self.embedding_size)
+        gaussian_noise = torch.randn(x_features.size(0), self.embedding_size).to(device)
         sampled_z = gaussian_noise * torch.exp(self.logstd) + self.mean
         return self.mean, self.logstd, sampled_z
 

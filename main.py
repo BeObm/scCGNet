@@ -10,7 +10,7 @@ from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_devic
 import time
 
 save_path = "./results/"
-dataset = "Klein"
+dataset = "lps_int2"
 
 # Network hyperparameters
 embedding_size = 64
