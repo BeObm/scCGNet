@@ -3,12 +3,17 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-from torch_geometric.data import Data
-from sklearn.preprocessing import LabelEncoder
 from scipy.sparse import csr_matrix
 from sklearn.neighbors import kneighbors_graph
 from scipy.sparse import issparse
+import h5py
+import anndata as ad
+import scanpy as sc
+import numpy as np
 import pandas as pd
+import torch
+from torch_geometric.data import Data
+from sklearn.preprocessing import LabelEncoder
 
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE here. We thank for the authors to make it publicly available
@@ -72,14 +77,14 @@ def load_data1(dataset, data_path, modified):
         # Already integer
         labels_int = labels.flatten()
 
-    return adj, features, labels_int,0
+    return adj, features, labels_int
 
 
 def load_data(dataset, data_path, n_top_genes, n_neighbors, n_pcs):
     if dataset in ["baron3", "baron4"]:
-        adj, features, labels_int,_ = load_data1(dataset, data_path)
+        adj, features, labels_int= load_data1(dataset, data_path,True)
 
-        return adj, features, labels_int
+        return adj, features, labels_int,14
     if dataset in ["Klein", "Chung", "YAN"]:
         X, y, n_clusters = read_tsv(f"{data_path}/data.tsv",
                                     f"{data_path}/label.ann",
@@ -182,46 +187,18 @@ def build_pyg_graph(
     n_neighbors: int = 15,
     n_pcs: int = 50,
     file=None,
-    normalize: bool = True ,        # Toggle library-size normalization + log1p
+    normalize: bool = True,
 ) -> Data:
-    """
-    Build a PyTorch Geometric graph from a cell x gene matrix.
-
-    Pipeline:
-        Raw counts → QC → [Log1p] → Top-k HVGs → PCA → kNN Graph → PyG Data
-
-    Args:
-        cell_gene_matrix: Raw count matrix (cells × genes).
-        cell_labels:      Cell type / condition labels per cell.
-        n_top_genes:      Number of highly variable genes to keep.
-        n_neighbors:      k for kNN graph construction.
-        n_pcs:            Number of PCs used for neighbor computation.
-        file:             Path to an HDF5 file containing X and Y datasets.
-        normalize:        If True, applies library-size normalization (target
-                          sum = 1e4) followed by log1p transformation.
-                          Set to False if the matrix is already normalized
-                          or you want to work with raw counts.
-
-    Returns:
-        torch_geometric.data.Data with:
-            - x:          Node features (cells × HVGs), optionally log-normalised
-            - edge_index: COO edge list from kNN graph  (2 × E)
-            - edge_attr:  Connectivities / weights       (E,)
-            - y:          Integer-encoded cell labels    (N,)
-    """
 
     # ------------------------------------------------------------------ #
     # 1. Build AnnData                                                     #
     # ------------------------------------------------------------------ #
     if file is not None:
-        f= h5py.File(file, "r")
-        f.keys()
+        f = h5py.File(file, "r")
         X = f["X"][:]
         y = f["Y"][:]
-
         adata = ad.AnnData(X)
         adata.obs["label"] = y
-
     else:
         if isinstance(cell_gene_matrix, pd.DataFrame):
             adata = sc.AnnData(X=cell_gene_matrix.values.astype(np.float32))
@@ -229,7 +206,6 @@ def build_pyg_graph(
             adata.obs_names = cell_gene_matrix.index.astype(str)
         else:
             adata = sc.AnnData(X=cell_gene_matrix.astype(np.float32))
-
         adata.obs["label"] = np.array(cell_labels)
         print(f"[1] Input:  {adata.n_obs} cells × {adata.n_vars} genes")
 
@@ -278,12 +254,12 @@ def build_pyg_graph(
     # 7. Extract edges from kNN connectivities (COO format)               #
     # ------------------------------------------------------------------ #
     conn = adata.obsp["connectivities"]
-    cx = conn.tocoo()
+    cx = conn.tocoo()  # converts dia_matrix → coo_matrix first
 
-    row = torch.tensor(cx.row, dtype=torch.long)
-    col = torch.tensor(cx.col, dtype=torch.long)
+    row = torch.tensor(cx.row.copy(), dtype=torch.long)
+    col = torch.tensor(cx.col.copy(), dtype=torch.long)
     edge_index = torch.stack([row, col], dim=0)
-    edge_attr  = torch.tensor(cx.data, dtype=torch.float)
+    edge_attr = torch.tensor(cx.data.copy(), dtype=torch.float)
 
     # ------------------------------------------------------------------ #
     # 8. Encode labels                                                     #
@@ -296,9 +272,16 @@ def build_pyg_graph(
     # 9. Assemble PyG Data object                                          #
     # ------------------------------------------------------------------ #
     n_clusters = len(le.classes_)
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)  # ← FIXED: uncommented
     data.label_encoder = le
     data.num_classes   = len(le.classes_)
+
+    # ------------------------------------------------------------------ #
+    # 10. Build dense adjacency matrix                                     #
+    # ------------------------------------------------------------------ #
+    n_nodes = data.num_nodes
+    adj = torch.zeros((n_nodes, n_nodes), dtype=torch.float)
+    adj[row, col] = edge_attr  # weighted; use 1.0 for binary: adj[row, col] = 1.0
 
     print(f"\n── PyG Graph Summary ──────────────────────")
     print(f"  Nodes (cells)  : {data.num_nodes}")
@@ -306,10 +289,18 @@ def build_pyg_graph(
     print(f"  Edges          : {data.num_edges}")
     print(f"  Classes        : {data.num_classes}  → {list(le.classes_)}")
     print(f"  Normalized     : {normalize}")
+    print(f"  Adjacency mat  : {adj.shape}")
     print(f"───────────────────────────────────────────")
 
-    return data, n_clusters
+    # Convert sparse connectivity matrix directly to dense numpy, then tensor
+    adj = adata.obsp["connectivities"].toarray()  # keep as numpy here
 
+    # Remove self-loops (this is the line that was failing)
+    adj = adj - sp.dia_matrix((adj.diagonal()[np.newaxis, :], [0]), shape=adj.shape).toarray()
+
+    # Now convert to tensor
+    adj = torch.tensor(adj, dtype=torch.float)
+    return adj, x, y, n_clusters  # ← FIXED: syntax error on original return
 def sparse_to_tuple(sparse_mx):
     """Convert sparse matrix to tuple
 

@@ -13,7 +13,7 @@ import math
 
 # Code below is adapted from https://github.com/nairouz/R-GAE/tree/master/GMM-VGAE. We thank for the authors to make it publicly available
 save_path = "./results/"
-dataset = "Chung"
+dataset = "Klein"
 
 
 # Network hyperparameter
