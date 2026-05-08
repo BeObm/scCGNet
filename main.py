@@ -4,14 +4,16 @@ import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
 import torch
+from collections import defaultdict
 import scipy.sparse as sp
+import pandas as pd
 from model import GMCM_VGAE
 from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_device
 import time
 
 save_path = "./results/"
 datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
-
+result=defaultdict(list)
 for dataset in datasets:
     try:
 
@@ -127,6 +129,29 @@ for dataset in datasets:
             wd=wd, momentum=momentum, save_path=save_path, dataset=dataset,
             features_new=features_new
         )
+        result[dataset].append(dataset)
+        result["ACC"].append(res[0])
+        result["ARI"].append(res[1])
+        result["NMI"].append(res[2])
+        result["Epoch"].append(epochs_cluster)
+        result["LR"].append(lr_cluster)
+        result["WD"].append(wd)
+        result["Momentum"].append(momentum)
+        result["n_top_genes"].append(n_top_genes)
+        result["n_neighbors"].append(n_neighbors)
+        result["n_pcs"].append(n_pcs)
+        result["num_features"].append(num_features)
+        result["num_neurons"].append(num_neurons)
+        result["embedding_size"].append(embedding_size)
+        result["activation"].append(activation)
+        result["optimizer"].append(optimizer)
+        result["seed"].append(seed)
+        result["min_clamp_dis"].append(min_clamp_dis)
+        result["max_clamp_dis"].append(max_clamp_dis)
+        result["min_clamp_mean"].append(min_clamp_mean)
+        result["max_clamp_mean"].append(max_clamp_mean)
+        result["nClusters"].append(nClusters)
+        result["device"].append(device)
 
         end = time.perf_counter()
         print(f"Total time: {end - start:0.4f} seconds")
@@ -135,5 +160,5 @@ for dataset in datasets:
     except:
              pass
 
-
+    pd.DataFrame(result).to_csv(f"./results/Results.csv")
 

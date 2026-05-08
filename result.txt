@@ -1,0 +1,565 @@
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+start
+Training......
+Loss=1328.2070
+Loss=1729.3166
+Loss=1254.5535
+Loss=834.1617
+Loss=157.4535
+Loss=107.5862
+Loss=106.1879
+Loss=119.2004
+Loss=180.4161
+Loss=200.0465
+Loss=71.2145
+Loss=141.5355
+Loss=100.9256
+Loss=88.1707
+Loss=80.0871
+Loss=74.4042
+Loss=106.6912
+Loss=91.5042
+Loss=78.1673
+Loss=83.5834
+Loss=164.8781
+Loss=68.9311
+Loss=134.1974
+Loss=260.0544
+Loss=202.9254
+Loss=124.2879
+Loss=149.3293
+Loss=186.5632
+Loss=208.1235
+Loss=198.7852
+Loss=134.0925
+Loss=282.8589
+Loss=132.3416
+Loss=392.7697
+Loss=137.4092
+Loss=149.2496
+Loss=172.6387
+Loss=191.3134
+Loss=448.2465
+Loss=149.3034
+Loss=117.3148
+Loss=146.6638
+Loss=158.4778
+Loss=269.4615
+Loss=278.6692
+Loss=159.9606
+Loss=190.7870
+Loss=168.1836
+Loss=126.0479
+Loss=122.0777
+Loss=171.4522
+Loss=198.9991
+Loss=88.8741
+Loss=82.4635
+Loss=88.3217
+Loss=120.6376
+Loss=486.1402
+Loss=551.6522
+Loss=1103.6053
+Loss=182.2768
+Loss=219.5758
+Loss=372.4033
+Loss=257.2588
+Loss=293.6216
+Loss=359.1454
+Loss=455.1392
+Loss=509.4849
+Loss=431.3254
+Loss=413.4284
+Loss=841.0019
+Loss=552.0619
+Loss=150.0181
+Loss=151.0223
+Loss=237.9268
+Loss=249.2839
+Loss=307.0692
+Loss=160.6519
+Loss=159.2727
+Loss=342.6010
+Loss=142.5955
+Loss=203.3649
+Loss=138.0753
+Loss=597.3050
+Loss=406.6437
+Loss=103.7520
+Loss=131.5608
+Loss=176.2677
+Loss=360.6755
+Loss=621.7806
+Loss=344.0776
+Loss=379.9727
+Loss=374.6190
+Loss=365.2993
+Loss=296.2420
+Loss=435.9436
+Loss=258.8266
+Loss=221.4489
+Loss=273.6404
+Loss=424.0942
+Loss=140.2968
+Loss=383.6951
+Loss=135.0458
+Loss=113.6809
+Loss=518.0162
+Loss=235.8682
+Loss=94.3169
+Loss=97.4119
+Loss=419.5587
+Loss=133.6758
+Loss=347.3186
+Loss=137.8400
+Loss=125.7935
+Loss=109.9391
+Loss=505.6611
+Loss=104.5723
+Loss=274.1840
+Loss=97.3690
+Loss=132.8394
+Loss=89.4690
+Loss=76.1653
+Loss=85.4033
+Loss=90.3789
+Loss=88.0759
+Loss=283.9147
+Loss=95.5386
+Loss=182.8067
+Loss=288.3929
+Loss=71.4755
+Loss=86.9317
+Loss=71.3187
+Loss=182.8721
+Loss=106.7843
+Loss=213.6750
+Loss=98.9670
+Loss=210.9915
+Loss=305.1428
+Loss=149.1742
+Loss=251.9371
+Loss=62.8832
+Loss=85.8557
+Loss=313.9698
+Loss=129.1427
+Loss=288.9385
+Loss=68.0536
+Loss=127.8784
+Loss=89.0092
+Loss=68.7925
+Loss=64.1356
+Loss=253.4000
+Loss=161.4455
+Loss=97.7004
+Loss=83.0431
+Loss=493.9262
+Loss=78.5712
+Loss=177.8642
+Loss=219.0012
+Loss=1456.6805
+Loss=68.2853
+Loss=69.8589
+Loss=73.7566
+Loss=154.4938
+Loss=132.4947
+Loss=115.1644
+Loss=160.3521
+Loss=166.8957
+Loss=143.8377
+Loss=236.6742
+Loss=156.6417
+Loss=181.4596
+Loss=205.3356
+Loss=144.5001
+Loss=141.2039
+Loss=137.1513
+Loss=178.4426
+Loss=260.4117
+Loss=121.6513
+Loss=167.2114
+Loss=173.3580
+Loss=201.7211
+Loss=125.4012
+Loss=92.2139
+Loss=224.6663
+Loss=129.4125
+Loss=174.4299
+Loss=294.8094
+Loss=104.7972
+Loss=335.6481
+Loss=631.9270
+Loss=382.5098
+Loss=70.1445
+Loss=83.1606
+Loss=107.6560
+Loss=90.3592
+Loss=99.9636
+Loss=116.5787
+Loss=135.5595
+Loss=244.3428
+Loss=145.6383
+Loss=267.9207
+Loss=189.5946
+Loss=286.0646
+Loss=151.1546
+Loss=204.6797
+Loss=229.7554
+Loss=210.7548
+Loss=206.1986
+Loss=146.4230
+Loss=209.0364
+Loss=146.9291
+Loss=293.8147
+Loss=119.3177
+Loss=173.7068
+Loss=262.1916
+Loss=150.9061
+Loss=93.7359
+Loss=224.8612
+Loss=88.3933
+Loss=85.0255
+Loss=79.8319
+Loss=396.7824
+Loss=188.6973
+Loss=271.7225
+Loss=159.6614
+Loss=157.6526
+Loss=73.3187
+Loss=83.9430
+Loss=146.5697
+Loss=127.6297
+Loss=96.0374
+Loss=226.7724
+Loss=222.7516
+Loss=78.3376
+Loss=261.3574
+Loss=67.9160
+Loss=67.0836
+Loss=156.6582
+Loss=145.5438
+Loss=118.4380
+Loss=118.9681
+Loss=67.6501
+Loss=67.9110
+Loss=218.4910
+Loss=223.6662
+Loss=76.7266
+Loss=117.5236
+Loss=123.8623
+Loss=142.7242
+Loss=125.9087
+Loss=64.7054
+Loss=87.5571
+Loss=82.0406
+Loss=64.7178
+Loss=72.7091
+Loss=104.6152
+Loss=103.1117
+Loss=64.8814
+Loss=126.4093
+Loss=101.6350
+Loss=171.5070
+Loss=84.2913
+Loss=61.1379
+Loss=102.3799
+Loss=315.5812
+Loss=70.5657
+Loss=66.1722
+Loss=60.0870
+Loss=78.4190
+Loss=59.5910
+Loss=60.1151
+Loss=102.1353
+Loss=64.9390
+Loss=69.5088
+Loss=71.2504
+Loss=111.8275
+Loss=77.0244
+Loss=62.5036
+Loss=62.3966
+Loss=60.3858
+Loss=60.9787
+Loss=82.8868
+Loss=198.6091
+Loss=60.4791
+Loss=95.8894
+Loss=111.7865
+Loss=118.4453
+Loss=90.5794
+Loss=96.5340
+Loss=244.2475
+Loss=110.6918
+Loss=57.0688
+Loss=59.3489
+Loss=67.9525
+Loss=152.1567
+Loss=59.3242
+Loss=73.8704
+Loss=176.7215
+Loss=59.6257
+Loss=97.7443
+Loss=240.8374
+Loss=92.1142
+Loss=161.9290
+Loss=67.2545
+Loss=212.7359
+Loss=56.0699
+Loss=146.0535
+Loss=59.9594
+Loss=200.6432
+Loss=147.7673
+Loss=60.5237
+Loss=96.1649
+Loss=63.8705
+Loss=64.1994
+Loss=64.8692
+Loss=68.7534
+Loss=93.4606
+Loss=97.4195
+Loss=65.1322
+Loss=190.0695
+Loss=64.1553
+Loss=72.5545
+Loss=86.7799
+Loss=119.1202
+Loss=62.8725
+Loss=91.4159
+Loss=96.6535
+Loss=131.6188
+Loss=702.7657
+Loss=62.3579
+Loss=66.3907
+Loss=69.6163
+Loss=298.3433
+Loss=59.6245
+Loss=80.4866
+Loss=67.9424
+Loss=56.6531
+Loss=74.5629
+Loss=86.3946
+Loss=172.9792
+Loss=256.6975
+Loss=61.3296
+Loss=140.5202
+Loss=367.7207
+Loss=164.3914
+Loss=444.2639
+Loss=146.4456
+Loss=110.4654
+Loss=60.3428
+Loss=125.0908
+Loss=55.8193
+Loss=157.2507
+Total time: 16.3560 seconds
+Training results for baron3: Acc=0.8657420249653259 | ARI=0.8460908597469111, NMI=0.7983824527150535
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+start
+Training......
+Loss=563.8623
+Loss=597.6390
+Loss=543.0389
+Loss=488.7074
+Loss=159.2004
+Loss=74.1867
+Loss=78.3154
+Loss=116.2379
+Loss=153.2722
+Loss=89.3933
+Loss=63.8440
+Loss=87.9256
+Loss=100.2389
+Loss=111.5031
+Loss=115.1396
+Loss=98.7731
+Loss=109.6139
+Loss=138.6668
+Loss=137.5111
+Loss=173.6228
+Loss=106.1677
+Loss=128.9373
+Loss=131.1390
+Loss=157.2457
+Loss=148.2788
+Loss=120.1837
+Loss=386.0679
+Loss=162.4605
+Loss=132.0184
+Loss=234.4279
+Loss=130.1744
+Loss=128.9205
+Loss=271.6075
+Loss=138.5148
+Loss=199.5716
+Loss=178.4987
+Loss=3239.4436
+Loss=251.7639
+Loss=114.8037
+Loss=525.7504
+Loss=710.8633
+Loss=789.3063
+Loss=842.5308
+Loss=900.5111
+Loss=772.7965
+Loss=828.9194
+Loss=986.7002
+Loss=1046.0536
+Loss=828.5532
+Loss=775.5447
+Loss=946.9402
+Loss=748.8851
+Loss=1004.9549
+Loss=855.5868
+Loss=1056.7800
+Loss=984.0496
+Loss=1092.9886
+Loss=2239.1959
+Loss=1003.9823
+Loss=1202.3436
+Loss=1091.7766
+Loss=1556.5825
+Loss=985.6614
+Loss=1070.1179
+Loss=1114.1096
+Loss=1040.2170
+Loss=937.4987
+Loss=1514.5529
+Loss=1886.0360
+Loss=1445.9036
+Loss=1393.1357
+Loss=1354.5008
+Loss=989.5303
+Loss=912.8907
+Loss=908.1357
+Loss=902.0571
+Loss=983.4369
+Loss=798.8459
+Loss=989.3681
+Loss=1138.2394
+Loss=719.3926
+Loss=1797.4471
+Loss=997.9275
+Loss=655.6685
+Loss=615.5968
+Loss=972.9427
+Loss=809.6903
+Loss=676.5817
+Loss=451.2251
+Loss=539.2349
+Loss=359.0752
+Loss=672.5551
+Loss=948.7431
+Loss=292.7513
+Loss=1125.6843
+Loss=800.1453
+Loss=171.5028
+Loss=190.9148
+Loss=181.3445
+Loss=2482.4173
+Loss=727.9624
+Loss=143.7012
+Loss=1998.2817
+Loss=224.2295
+Loss=234.1170
+Loss=191.0203
+Loss=404.4601
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Cell indices are aligned in the two files
+X shape: (2717, 2000) (2717 cells, 2000 genes)
+Number of clusters: 4
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Cell indices are aligned in the two files
+X shape: (317, 1998) (317 cells, 1998 genes)
+Number of clusters: 4
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+[2] Post-QC: 306 cells × 13576 genes
+[3] Normalization applied: library-size (target=1e4) + log1p
+[4] HVGs selected: 2000
+[5] kNN graph built (k=15, pcs=5)
+
+── PyG Graph Summary ──────────────────────
+  Nodes (cells)  : 306
+  Node features  : 2000  (HVGs)
+  Edges          : 5704
+  Classes        : 4  → [np.int64(1), np.int64(2), np.int64(3), np.int64(4)]
+  Normalized     : True
+  Adjacency mat  : torch.Size([306, 306])
+───────────────────────────────────────────
+start
+Training......
+Loss=99.7778
+Loss=503.6161
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+[2] Post-QC: 2717 cells × 24022 genes
+[3] Normalization applied: library-size (target=1e4) + log1p
+[4] HVGs selected: 2000
+[5] kNN graph built (k=15, pcs=5)
+
+── PyG Graph Summary ──────────────────────
+  Nodes (cells)  : 2717
+  Node features  : 2000  (HVGs)
+  Edges          : 51738
+  Classes        : 4  → [np.float64(1.0), np.float64(2.0), np.float64(3.0), np.float64(4.0)]
+  Normalized     : True
+  Adjacency mat  : torch.Size([2717, 2717])
+───────────────────────────────────────────
+start
+Training......
+Loss=766.6859
+Loss=1914.8558
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+[2] Post-QC: 1351 cells × 8780 genes
+[3] Normalization applied: library-size (target=1e4) + log1p
+[4] HVGs selected: 2000
+[5] kNN graph built (k=15, pcs=5)
+
+── PyG Graph Summary ──────────────────────
+  Nodes (cells)  : 1351
+  Node features  : 2000  (HVGs)
+  Edges          : 25196
+  Classes        : 10  → [np.float64(1.0), np.float64(2.0), np.float64(3.0), np.float64(4.0), np.float64(5.0), np.float64(6.0), np.float64(7.0), np.float64(8.0), np.float64(9.0), np.float64(10.0)]
+  Normalized     : True
+  Adjacency mat  : torch.Size([1351, 1351])
+───────────────────────────────────────────
+start
+Training......
+Loss=389.6280
+Loss=440.5359
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True
+Using CUDA GPU: NVIDIA H100 80GB HBM3 MIG 3g.40gb
+True

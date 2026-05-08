@@ -7,8 +7,8 @@
 #SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --time=24:30:00             # total run time limit (HH:MM:SS)
 #SBATCH --account=rrg-hup
-#SBATCH --output=result.txt
-#SBATCH --error=error.txt
+#SBATCH --output=result_output.txt
+#SBATCH --error=error_log.txt
 # Standard error file
 
 
