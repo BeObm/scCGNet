@@ -326,10 +326,11 @@ def build_pyg_data(adj, features, labels=None, make_undirected=True, remove_diag
 
     data = Data(x=x, edge_index=edge_index)
 
-    if labels is not None:
+    try:
         data.y = torch.from_numpy(np.asarray(labels)).long()
         num_classes = int(data.y.unique().numel())
-
+    except:
+        raise ValueError("Labels not provided for the data, cannot build PyG Dataset.")
 
     return data,num_classes
 

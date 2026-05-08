@@ -72,7 +72,6 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args   = parse_args()
-
     device = get_device()
     print(f"Code running on device: {device} using {args.dataset} dataset")
     # Seed everything
@@ -96,57 +95,26 @@ def main():
         n_pcs=args.n_pcs,
     )
 
-    print(
-        f"\nGraph: {data.num_nodes} nodes | "
-        f"{data.x.shape[1]} features | "
-        f"{data.num_edges} edges | "
-        f"{n_clusters} clusters\n"
-    )
-
-    splitter = RandomLinkSplit(
-        num_val=0.0,
-        num_test=0.0,
-        is_undirected=True,
-        add_negative_train_samples=True,
-        neg_sampling_ratio=1.0,
-    )
-    train_data, _, _ = splitter(data)
-
-
-    print(f"{'='*55}")
+    # print(
+    #     f"\nGraph: {data.num_nodes} nodes | "
+    #     f"{data.x.shape[1]} features | "
+    #     f"{data.num_edges} edges | "
+    #     f"{n_clusters} clusters\n"
+    # )
+    print(f"{'='*50}")
     print(f"  Config")
     print(f"{'='*55}")
     for k, v in vars(args).items():
         print(f"  {k:<20} : {v}")
     print(f"{'='*55}\n")
+    model=""
 
-    encoder = GCNEncoder(in_channels=data.x.shape[1],hidden_channels=args.hidden_channels,latent_channels=args.embedding_size)
-    zinb_dec = ZINBDecoder(latent_channels=args.embedding_size,hidden_channels=args.hidden_channels,out_channels=data.x.shape[1], dropout=args.dropout)
-    adj_dec = AdjDecoder(latent_channels=args.embedding_size,hidden_channels=args.hidden_channels,dropout=args.dropout)
-    gmcm = GMCM(latent_dim=args.embedding_size, n_clusters=n_clusters, tau=0.2)
 
-    optimizer = torch.optim.Adam(
-        list(encoder.parameters()) + list(zinb_dec.parameters()) + list(adj_dec.parameters())+ list(gmcm.parameters()),
-        lr=1e-3)
+    optimizer = torch.optim.Adam()
 
     for epoch in range(args.epochs):
-        z=encoder(train_data.x, train_data.edge_index)
-        pi,mu,theta = zinb_dec(z)
-        loss_zinb=zinb_loss(train_data.x, pi,mu,theta)
+        pass
 
-        z_adj = adj_dec(z)
-        loss_adj=adj_reconstruction_loss(z_adj,train_data.edge_index,train_data.x.shape[0],None)
-        y_pred=gmcm.predict(z)
-        l_contrastive=contrastive_loss(z,y_pred)
-        loss_gmcm = gmcm.loss(z)
-        total_loss= loss_zinb + loss_adj+ 0.1*loss_gmcm + 0.1*l_contrastive
-
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
-
-        if epoch % 20 == 0:
-            print(epoch, total_loss.item())
     y_pred=gmcm.predict(z)
 
     acc, ari, nmi = clustering_metrics(data.y, y_pred)
