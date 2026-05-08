@@ -13,7 +13,7 @@ save_path = "./results/"
 dataset = "baron3"
 
 # Network hyperparameters
-embedding_size = 64
+embedding_size = 32
 num_neurons = 256
 activation = "Sigmoid"
 optimizer = "Adam"
