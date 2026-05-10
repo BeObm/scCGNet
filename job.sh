@@ -19,4 +19,4 @@ cd /home/moctard/scratch/scGMCM-VGAE
 apptainer exec --nv \
   --bind $PWD:/workspace \
   /home/moctard/scratch/scrna.sif \
-  python3 /workspace/old_model.py
+  python3 /workspace/main.py
