@@ -20,7 +20,6 @@ result=defaultdict(list)
 for i, dataset in enumerate(datasets[4:5]):
     print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
     try:
-
         # Network hyperparameters
         embedding_size = 32
         num_neurons = 256
