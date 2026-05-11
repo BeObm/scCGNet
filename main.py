@@ -15,7 +15,6 @@ datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","
 result=defaultdict(list)
 for dataset in datasets:
     try:
-
         # Network hyperparameters
         embedding_size = 32
         num_neurons = 256
