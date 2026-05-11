@@ -11,12 +11,11 @@ from model import GMCM_VGAE
 from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_device
 import time
 
+method="old"
 save_path = "./results/"
 # datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
 datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
 result=defaultdict(list)
-
-
 for i, dataset in enumerate(datasets[4:5]):
     print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
     try:
@@ -112,18 +111,28 @@ for i, dataset in enumerate(datasets[4:5]):
         weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
         weight_tensor_orig[weight_mask_orig] = pos_weight_orig
 
+
+
+
         # ------------------------------------------------------------------ #
         # Train                                                                #
         # ------------------------------------------------------------------ #
         print("start")
         start = time.perf_counter()
-
-        network = GMCM_VGAE(
-            adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
-            embedding_size=embedding_size, nClusters=nClusters, activation=activation,
-            seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
-            min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
-        )
+        if method=="old":
+                network = GMCM_VGAE(
+                    adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
+                    embedding_size=embedding_size, nClusters=nClusters, activation=activation,
+                    seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
+                    min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
+                )
+        elif method=="new":
+            network = GMCM(
+                adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
+                embedding_size=embedding_size, nClusters=nClusters, activation=activation,
+                seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
+                min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
+            )
         network.to(device)
 
         res, y_pred, y = network.train(
