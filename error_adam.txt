@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/scanpy/preprocessing/_highly_variable_genes.py", line 71, in _highly_variable_genes_seurat_v3
+    from skmisc.loess import loess
+ModuleNotFoundError: No module named 'skmisc'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/main.py", line 49, in <module>
+    adj, features, labels, nClusters = load_data(
+  File "/workspace/preprocessing.py", line 95, in load_data
+    adj, x, y, n_clusters = build_pyg_graph(
+  File "/workspace/preprocessing.py", line 143, in build_pyg_graph
+    sc.pp.highly_variable_genes(adata, n_top_genes=actual_hvg, flavor="seurat_v3")
+  File "/usr/local/lib/python3.10/dist-packages/legacy_api_wrap/__init__.py", line 88, in fn_compatible
+    return fn(*args_all, **kw)
+  File "/usr/local/lib/python3.10/dist-packages/scanpy/preprocessing/_highly_variable_genes.py", line 701, in highly_variable_genes
+    return _highly_variable_genes_seurat_v3(
+  File "/usr/local/lib/python3.10/dist-packages/scanpy/preprocessing/_highly_variable_genes.py", line 74, in _highly_variable_genes_seurat_v3
+    raise ImportError(msg) from e
+ImportError: Please install skmisc package via `pip install --user scikit-misc

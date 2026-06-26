@@ -154,14 +154,40 @@ class GMCM_VGAE(nn.Module):
         y_pred = self.predict_gmcm(emb, nClusters, mu_c, log_sigma2_c, pi)
         for c in range(self.nClusters):
             log_sigma2c = torch.diagonal(log_sigma2_c[c, :]).to(device)
+        # Clamp the log-variances themselves, right where they're produced by the network
+        # (do this once, as close to the encoder output as possible)
+        z_sigma2_log = torch.clamp(z_sigma2_log, min=-10, max=10)
+        log_sigma2c = torch.clamp(log_sigma2c, min=-10, max=10)
+
+        # KL1 — clamp the exp() argument so it can't blow past a safe range
         KL1 = 0.5 * torch.mean(torch.sum(yita_c * torch.sum(log_sigma2c.unsqueeze(0) +
                                                             torch.exp(
-                                                                z_sigma2_log.unsqueeze(1) - log_sigma2c.unsqueeze(0)) +
+                                                                torch.clamp(
+                                                                    z_sigma2_log.unsqueeze(1) - log_sigma2c.unsqueeze(
+                                                                        0), max=10)) +
                                                             (z_mu.unsqueeze(1) - mu_c.unsqueeze(0)).pow(2) / torch.exp(
             log_sigma2c.unsqueeze(0)), 2), 1))
 
-        KL2 = torch.mean(torch.sum(yita_c * torch.log(pi.unsqueeze(0) / (yita_c)), 1)) + 0.5 * torch.mean(
+        # KL2 — clamp yita_c away from 0 before dividing/logging
+        yita_c_safe = torch.clamp(yita_c, min=1e-8)
+        KL2 = torch.mean(torch.sum(yita_c * torch.log(pi.unsqueeze(0) / yita_c_safe), 1)) + 0.5 * torch.mean(
             torch.sum(1 + z_sigma2_log, 1))
+
+        # KL1 = 0.5 * torch.mean(torch.sum(yita_c * torch.sum(log_sigma2c.unsqueeze(0) +
+        #                                                     torch.exp(
+        #                                                         torch.clamp(
+        #                                                             z_sigma2_log.unsqueeze(1) - log_sigma2c.unsqueeze(
+        #                                                                 0), max=10)) +
+        #                                                     (z_mu.unsqueeze(1) - mu_c.unsqueeze(0)).pow(2) / torch.exp(
+        #     log_sigma2c.unsqueeze(0)), 2), 1))
+        #
+        # # KL2 — clamp yita_c away from 0 before dividing/logging
+        # yita_c_safe = torch.clamp(yita_c, min=1e-8)
+        # KL2 = torch.mean(torch.sum(yita_c * torch.log(pi.unsqueeze(0) / yita_c_safe), 1)) + 0.5 * torch.mean(
+        #     torch.sum(1 + z_sigma2_log, 1))
+
+
+
         Loss_gmcm = KL1 - KL2
 
         # ZINB loss
@@ -218,7 +244,7 @@ class GMCM_VGAE(nn.Module):
             z_mu = z_mu.to(device)
             z_sigma2_log = z_sigma2_log.to(device)
             emb = emb.to(device)
-
+            # print(f"Epoch {epoch}  | emb min/max: {emb.min().item()}/{emb.max().item()} | emb has NaN: {torch.isnan(emb).any().item()}")
             gmcm = GaussianMixtureCopula(n_clusters=self.nClusters, ndim=dim)
             gmcm_fit = gmcm.fit(emb.detach().cpu().numpy(), method='kmeans', criteria='GMCM', eps=0.0001)
             pies = torch.from_numpy(gmcm_fit.params.prob)
@@ -255,6 +281,8 @@ class GMCM_VGAE(nn.Module):
             logfile.flush()
 
             Loss_total.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
+
             opti.step()
             lr_s.step()
             count += 1
@@ -311,6 +339,7 @@ class GMCM_VGAE(nn.Module):
         # extra=(m,d,p)
         extra = (m, d, p)
         return extra
+
 
 
 def random_uniform_init(input_dim, output_dim, seed):

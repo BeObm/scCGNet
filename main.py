@@ -1,5 +1,8 @@
 import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "15"
+
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
@@ -14,11 +17,11 @@ import time
 method="old"
 save_path = "./results/"
 # datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
-datasets = ["baron3"]#,"baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
+datasets = ["Adam"]#,"baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
 result=defaultdict(list)
 for i, dataset in enumerate(datasets):
-    print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
-    try:
+        print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
+    # try:
         # Network hyperparameters
         embedding_size = 32
         num_neurons = 256
@@ -34,11 +37,9 @@ for i, dataset in enumerate(datasets):
 
         # Clustering hyperparameters
         epochs_cluster = 350
-        lr_cluster = 0.01
-        n_top_genes = 2000
-        n_neighbors = 15
-        n_pcs = 5
-
+        lr_cluster = 0.005
+        n_top_genes = 1200
+        n_neighbors = 5
         device = get_device()
         print(torch.cuda.is_available())
 
@@ -47,10 +48,9 @@ for i, dataset in enumerate(datasets):
         # ------------------------------------------------------------------ #
         adj, features, labels, nClusters = load_data(
             dataset=dataset,
-            data_path=f"./data/{dataset}",
+            data_path=f"./data",
             n_top_genes=n_top_genes,
-            n_neighbors=n_neighbors,
-            n_pcs=n_pcs,
+            n_neighbors=n_neighbors
         )
 
         # ------------------------------------------------------------------ #
@@ -60,7 +60,7 @@ for i, dataset in enumerate(datasets):
             if dataset in ["baron3", "baron4", "baron5"]:
                 return sp.csr_matrix(t)
             else:
-                return sp.csr_matrix(t.detach().cpu().numpy())
+                return sp.csr_matrix(t.detach().cpu().to_dense().numpy())
 
         # ------------------------------------------------------------------ #
         # Preprocess adjacency                                                 #
@@ -69,6 +69,12 @@ for i, dataset in enumerate(datasets):
             features_new = features.astype(np.float32)
         else:
             features_new = features.numpy()          # features is a tensor
+
+        sample = features_new[:1000]
+        print("All integers?", np.allclose(sample, np.round(sample)))
+        print("Min:", sample.min(), "Max:", sample.max())
+        print("Has negative values?", (sample < 0).any())
+
         num_nodes    = features.shape[0]
         num_features = features.shape[1]
 
@@ -112,8 +118,6 @@ for i, dataset in enumerate(datasets):
         weight_tensor_orig[weight_mask_orig] = pos_weight_orig
 
 
-
-
         # ------------------------------------------------------------------ #
         # Train                                                                #
         # ------------------------------------------------------------------ #
@@ -127,6 +131,12 @@ for i, dataset in enumerate(datasets):
                     min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
                 )
         elif method=="new":
+            network = GMCM(
+                adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
+                embedding_size=embedding_size, nClusters=nClusters, activation=activation,
+                seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
+                min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
+            )
             network = GMCM(
                 adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
                 embedding_size=embedding_size, nClusters=nClusters, activation=activation,
@@ -151,7 +161,6 @@ for i, dataset in enumerate(datasets):
         result["Momentum"].append(momentum)
         result["n_top_genes"].append(n_top_genes)
         result["n_neighbors"].append(n_neighbors)
-        result["n_pcs"].append(n_pcs)
         result["num_features"].append(num_features)
         result["num_neurons"].append(num_neurons)
         result["embedding_size"].append(embedding_size)
@@ -168,8 +177,7 @@ for i, dataset in enumerate(datasets):
         print(f"Total time: {end - start:0.4f} seconds")
         print(f"Training results for {dataset}: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
 
-    except:
-             pass
+    # except Exception as e:
+    #     print(e)
 
-    pd.DataFrame(result).to_csv(f"./results/Results.csv")
-
+        pd.DataFrame(result).to_csv(f"./results/Results.csv")

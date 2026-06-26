@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=scGMCM       # create a short name for your job
+#SBATCH --job-name=scCGNet      # create a short name for your job
 #SBATCH --nodes=1                   # node count
 #SBATCH --ntasks=1                  # total number of tasks across all nodes
 #SBATCH --cpus-per-task=16           # cpu-cores per task (>1 if multi-threaded tasks)
@@ -7,7 +7,7 @@
 #SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --time=03:30:00             # total run time limit (HH:MM:SS)
 #SBATCH --account=rrg-hup
-#SBATCH --output=result.txt
+#SBATCH --output=output.txt
 #SBATCH --error=error.txt
 # Standard error file
 
