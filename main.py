@@ -23,7 +23,7 @@ for i, dataset in enumerate(datasets):
         print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
     # try:
         # Network hyperparameters
-        embedding_size = 32
+        embedding_size = 128
         num_neurons = 256
         activation = "Sigmoid"
         optimizer = "Adam"
@@ -46,9 +46,13 @@ for i, dataset in enumerate(datasets):
         # ------------------------------------------------------------------ #
         # Load data                                                            #
         # ------------------------------------------------------------------ #
+        if dataset in ["baron3", "baron4", "baron5"]:
+            datapath=f"./data/{dataset}"
+        else:
+            datapath=f"./data"
         adj, features, labels, nClusters = load_data(
             dataset=dataset,
-            data_path=f"./data",
+            data_path=datapath,
             n_top_genes=n_top_genes,
             n_neighbors=n_neighbors
         )
@@ -57,23 +61,20 @@ for i, dataset in enumerate(datasets):
         # Helper: convert adj tensor → scipy sparse csr                       #
         # ------------------------------------------------------------------ #
         def tensor_to_scipy_sparse(t: torch.Tensor) -> sp.csr_matrix:
-            if dataset in ["baron3", "baron4", "baron5"]:
+
                 return sp.csr_matrix(t)
-            else:
-                return sp.csr_matrix(t.detach().cpu().to_dense().numpy())
+
 
         # ------------------------------------------------------------------ #
         # Preprocess adjacency                                                 #
         # ------------------------------------------------------------------ #
-        if dataset in ["baron3", "baron4", "baron5"]:
-            features_new = features.astype(np.float32)
-        else:
-            features_new = features.numpy()          # features is a tensor
+        features_new = features.astype(np.float32)
+                 # features is a tensor
 
-        sample = features_new[:1000]
-        print("All integers?", np.allclose(sample, np.round(sample)))
-        print("Min:", sample.min(), "Max:", sample.max())
-        print("Has negative values?", (sample < 0).any())
+        # sample = features_new[:1000]
+        # print("All integers?", np.allclose(sample, np.round(sample)))
+        # print("Min:", sample.min(), "Max:", sample.max())
+        # print("Has negative values?", (sample < 0).any())
 
         num_nodes    = features.shape[0]
         num_features = features.shape[1]
@@ -116,6 +117,11 @@ for i, dataset in enumerate(datasets):
         weight_mask_orig   = adj_label.to_dense().view(-1) == 1
         weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
         weight_tensor_orig[weight_mask_orig] = pos_weight_orig
+
+        print("features has NaN:", torch.isnan(features.to_dense()).any().item())
+        print("features has Inf:", torch.isinf(features.to_dense()).any().item())
+        print("adj_norm has NaN:", torch.isnan(adj_norm.to_dense()).any().item())
+        print("adj_norm has Inf:", torch.isinf(adj_norm.to_dense()).any().item())
 
 
         # ------------------------------------------------------------------ #

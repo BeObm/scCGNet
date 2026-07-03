@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
+import math
 from torch.optim import Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import StepLR
 from sklearn import metrics
@@ -29,14 +30,17 @@ class GraphConvSparse(nn.Module):
         return outputs
 
 
+
 class MeanAct(nn.Module):
     def __init__(self, min_clamp, max_clamp, **kwargs):
         super(MeanAct, self).__init__(**kwargs)
-        self.min=min_clamp
-        self.max=max_clamp
-    def forward(self, x):
-        return torch.clamp(torch.exp(x), min=self.min, max=self.max)
+        self.min = min_clamp
+        self.max = max_clamp
+        self._log_max = math.log(max_clamp)  # exp(_log_max) == max_clamp exactly
 
+    def forward(self, x):
+        x = torch.clamp(x, max=self._log_max)
+        return torch.clamp(torch.exp(x), min=self.min, max=self.max)
 
 class DispAct(nn.Module):
     def __init__(self, min_clamp, max_clamp,**kwargs):
@@ -90,9 +94,8 @@ class GMCM_VGAE(nn.Module):
         self.seed = kwargs['seed']
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-
         # VGAE training parameters
-        self.base_gcn = GraphConvSparse(self.seed, self.num_features, self.num_neurons, self.activation)
+        self.base_gcn = GraphConvSparse(self.seed, self.num_features, self.num_neurons, self.adj,self.activation)
         self.gcn_mean = GraphConvSparse(self.seed, self.num_neurons, self.embedding_size, self.adj,
                                         activation=lambda x: x)
         self.gcn_logstddev = GraphConvSparse(self.seed, self.num_neurons, self.embedding_size, self.adj,
@@ -118,14 +121,31 @@ class GMCM_VGAE(nn.Module):
         nb_final = t1 + t2
 
         nb_case = nb_final - torch.log(1.0 - pi + eps)
-        zero_nb = torch.pow(disp / (disp + mean + eps), disp)
+        log_base = torch.log(disp + eps) - torch.log(disp + mean + eps)
+
+        zero_nb = torch.exp(disp * log_base)
+        log_base.retain_grad()
+        zero_nb.retain_grad()
+        self._debug_log_base = log_base
+        self._debug_zero_nb = zero_nb
+
+
         zero_case = -torch.log(pi + ((1.0 - pi) * zero_nb) + eps)
         result = torch.where(torch.le(x, 1e-8), zero_case, nb_case)
+
+
 
         if ridge_lambda > 0:
             ridge = ridge_lambda * torch.square(pi)
             result += ridge
         result = torch.mean(result)
+        #
+        # for name, t in [("t1", t1), ("t2", t2), ("nb_final", nb_final),
+        #                 ("zero_nb", zero_nb), ("zero_case", zero_case),
+        #                 ("nb_case", nb_case), ("result", result)]:
+        #     if torch.isnan(t).any() or torch.isinf(t).any():
+        #         print(f"[ZINB forward] NaN/Inf in {name}")
+
         return result
 
     def Calculate_Loss(self, features, adj, x_, adj_label, y, weight_tensor, norm, z_mu, z_sigma2_log, emb, L=1):
@@ -193,6 +213,10 @@ class GMCM_VGAE(nn.Module):
         # ZINB loss
         extra = self.decodeZINB(emb)
         m, d, p = extra
+
+        p.retain_grad()
+        self._debug_zinb_pi = p
+
         Loss_zinb = self.ZINB_loss(features.to_dense().squeeze(0), m, d, p)
 
         Loss_total = Loss_recons + Loss_gmcm + Loss_zinb
@@ -236,9 +260,12 @@ class GMCM_VGAE(nn.Module):
             # Encoding
             z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)
 
+            # if torch.isnan(emb).any() or torch.isinf(emb).any():
+            #     print(f"[epoch {epoch}] NaN/Inf in emb — logstd min/max: "
+            #           f"{self.logstd.min().item()}/{self.logstd.max().item()}")
+
             # Decoding
             x_ = self.decode(emb).to(device)
-
             # Use GMCM to model the clusters
             _, dim = emb.detach().cpu().numpy().shape
             z_mu = z_mu.to(device)
@@ -281,6 +308,17 @@ class GMCM_VGAE(nn.Module):
             logfile.flush()
 
             Loss_total.backward()
+
+            # for name, t in [("log_base", self._debug_log_base),
+            #                 ("zero_nb", self._debug_zero_nb),
+            #                 ("p_dropout", self._debug_zinb_pi),
+            #                 ("mean_linear", self._debug_mean_linear)]:
+            #     if t.grad is not None and (torch.isnan(t.grad).any() or torch.isinf(t.grad).any()):
+            #         print(f"[backward] NaN/Inf in grad of {name}")
+            # for name, p in self.named_parameters():
+            #     if p.grad is not None and (torch.isnan(p.grad).any() or torch.isinf(p.grad).any()):
+            #         print(f"[epoch {epoch}] NaN/Inf grad in {name}")
+
             torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
 
             opti.step()
@@ -333,10 +371,16 @@ class GMCM_VGAE(nn.Module):
         return A_pred
 
     def decodeZINB(self, z):
-        m = self.Mean(z)
+        lin_out = self.Mean[0](z)  # Linear, before MeanAct
+        # print(f"[Mean] pre-activation min/max: {lin_out.min().item()}/{lin_out.max().item()}")
+        lin_out.retain_grad()
+        self._debug_mean_linear = lin_out
+        m = self.Mean[1](lin_out)  # MeanAct
+
         d = self.Dispersion(z)
         p = self.Dropout(z)
-        # extra=(m,d,p)
+        # print(f"[ZINB] pi(dropout) min/max: {p.min().item()}/{p.max().item()}")
+        p.retain_grad()
         extra = (m, d, p)
         return extra
 

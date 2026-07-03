@@ -3,12 +3,7 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-from scipy.sparse import csr_matrix
-from sklearn.neighbors import kneighbors_graph
-from scipy.sparse import issparse
-import pyreadr
-import h5py
-import anndata as ad
+from typing import Optional,Tuple
 import scanpy as sc
 import numpy as np
 import pandas as pd
@@ -17,6 +12,7 @@ from torch_geometric.data import Data
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import pdist, squareform
+from torch_geometric.utils import add_self_loops
 import math
 
 
@@ -73,7 +69,8 @@ def load_data1(dataset, data_path, modified):
         labels[test_idx_reorder, :] = labels[test_idx_range, :]
 
     adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
-
+    num_edges = adj.sum()
+    print("Dataset has %d nodes, %d edges, with a mean degree of %.2f" % (adj.shape[0], num_edges, adj.sum() / num_edges))
     # Convert labels - handle both one-hot and integer formats
     if len(labels.shape) > 1 and labels.shape[1] > 1:
         # One-hot encoded
@@ -100,100 +97,121 @@ def load_data(dataset, data_path, n_top_genes, n_neighbors):
         return adj, x, y, n_clusters
 
 
-
 def build_pyg_graph(
-    n_top_genes: int = 1200,
-    n_neighbors: int = 5,
-    file=None,
-    normalize: bool = False,
-) -> Data:
+        n_top_genes: int = 1200,
+        n_neighbors: int = 5,
+        file: Optional[str] = None,
+        normalize: bool = False,
+        label_key = "cell_ontology_class",
+        weighted_adj: bool = False,
+) -> Tuple[sp.csr_array, sp.csc_matrix, np.ndarray, int]:
+    """
+    Build graph inputs from a cell x gene AnnData (.h5ad) file.
+
+    Returns
+    -------
+    adj       : scipy.sparse.csr_array   -- binary (or weighted) kNN adjacency
+    features  : scipy.sparse.csc_matrix  -- node feature matrix, HVG-subsetted
+    labels    : numpy.ndarray            -- integer-encoded cell type labels
+    nClusters : int                      -- number of distinct classes
+    """
 
     # ------------------------------------------------------------------ #
-    # 1. Build AnnData                                                     #
+    # 1. Load AnnData
     # ------------------------------------------------------------------ #
-    if file is not None:
-        data1 = sc.read_h5ad(file)
-        adata = data1.to_memory()
-    else:
-        raise FileNotFoundError(" File not found")
+
+    if file is None:
+        raise FileNotFoundError("No file path provided.")
+    adata = sc.read_h5ad(file)  # loads fully into memory by default
+
+    label_keys = ["cell_ontology_class", "celltype"]
+    for lk in label_keys:
+        if lk in adata.obs.columns:
+            label_key = lk
+            break
 
     # ------------------------------------------------------------------ #
-    # 2. QC filtering                                                      #
+    # 2. QC filtering
     # ------------------------------------------------------------------ #
-    sc.pp.filter_cells(adata, min_genes=2000)
-    sc.pp.filter_genes(adata, min_cells=800)
-    print(f"[2] Post-QC: {adata.n_obs} cells × {adata.n_vars} genes")
+    sc.pp.filter_cells(adata, min_genes=200)
+    print(f"[2] Post-QC: {adata.n_obs} cells x {adata.n_vars} genes")
+
+    if adata.n_obs <= n_neighbors:
+        raise ValueError(
+            f"n_neighbors={n_neighbors} must be < number of remaining cells "
+            f"({adata.n_obs}) after QC filtering."
+        )
+    if label_key not in adata.obs.columns:
+        raise KeyError(
+            f"label_key='{label_key}' not found in adata.obs. "
+            f"Available columns: {list(adata.obs.columns)}"
+        )
 
     # ------------------------------------------------------------------ #
-    # 3. Normalise & log-transform (optional)                             #
+    # 3. Highly variable genes -- computed on RAW counts (seurat_v3 requires
+    #    this) and, unlike the original, actually applied to subset adata.
     # ------------------------------------------------------------------ #
-    if normalize==True:
+    actual_hvg = min(n_top_genes, adata.n_vars)
+    print(f"[3] Requested n_top_genes={n_top_genes}, using {actual_hvg} "
+          f"(n_vars={adata.n_vars})")
+    sc.pp.highly_variable_genes(adata, n_top_genes=actual_hvg, flavor="seurat_v3")
+    adata = adata[:, adata.var["highly_variable"]].copy()
+    print(f"[3] HVG subset applied: {adata.n_vars} genes retained")
+
+    # ------------------------------------------------------------------ #
+    # 4. Normalize & log-transform (optional) -- applied AFTER HVG selection
+    #    so it doesn't bias the seurat_v3 variance model.
+    # ------------------------------------------------------------------ #
+    if normalize:
         sc.pp.normalize_total(adata, target_sum=1e4)
         sc.pp.log1p(adata)
-        print(f"[3] Normalization applied: library-size (target=1e4) + log1p")
+        print("[4] Normalization applied: library-size (target=1e4) + log1p")
     else:
-        print(f"[3] Normalization skipped: using matrix as-is")
+        print("[4] Normalization skipped: using raw counts as-is")
 
     # ------------------------------------------------------------------ #
-    # 4. Highly variable genes                                             #
+    # 5. kNN graph on the HVG-subsetted feature matrix
     # ------------------------------------------------------------------ #
-    print(f"ntop genes: {n_top_genes}, n_vars is : {adata.n_vars}")
-    actual_hvg = min(n_top_genes, adata.n_vars)
-    print(f'actual_hvg: {actual_hvg}')
-    sc.pp.highly_variable_genes(adata, n_top_genes=actual_hvg, flavor="seurat_v3")
-    print(f"[4] HVGs selected: {adata.var['highly_variable'].sum()}")
+    sc.pp.neighbors(
+        adata, n_neighbors=n_neighbors, use_rep="X", method="gauss", metric="cosine"
+    )
+    print(f"[5] kNN graph built (k={n_neighbors}, {adata.n_vars}-dim features, "
+          f"cosine metric)")
 
     # ------------------------------------------------------------------ #
-    # 5. kNN graph for VGAE (no PCA, raw counts)                         #
-    # ------------------------------------------------------------------ #
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X", method="gauss",metric="cosine")
-
-    print(f"[5] kNN graph built (k={n_neighbors}, raw features, cosine metric)")
-
-    # ------------------------------------------------------------------ #
-    # 6. Extract node features                                             #
+    # 6. Node features -- kept sparse (csc), no densify round-trip
     # ------------------------------------------------------------------ #
     X_mat = adata.X
-    if hasattr(X_mat, "toarray"):
-        X_mat = X_mat.toarray()
-    N=X_mat.shape[0]
-    x = torch.tensor(X_mat, dtype=torch.float)
-    print("Shape:", x.shape)
+    if not sp.issparse(X_mat):
+        X_mat = sp.csc_matrix(X_mat, dtype=np.float32)
+    else:
+        X_mat = X_mat.astype(np.float32).tocsc()
+    N = X_mat.shape[0]
+    print(f"[6] Node feature matrix shape: {X_mat.shape}, dtype: {X_mat.dtype}")
 
     # ------------------------------------------------------------------ #
-    # 7. Extract edges from kNN connectivities (COO format)               #
+    # 7. Adjacency from kNN connectivities
     # ------------------------------------------------------------------ #
     conn = adata.obsp["connectivities"]
-    cx = conn.tocoo()  # converts dia_matrix → coo_matrix first
+    cx = conn.tocoo()
+    print(f"[7] Number of edges: {cx.nnz}")
 
-    row = torch.tensor(cx.row.copy(), dtype=torch.long)
-    col = torch.tensor(cx.col.copy(), dtype=torch.long)
-    edge_index = torch.stack([row, col], dim=0)
-    edge_attr = torch.tensor(cx.data.copy(), dtype=torch.float)
+    if weighted_adj:
+        adj_coo = cx
+    else:
+        adj_coo = sp.coo_matrix(
+            (np.ones(cx.nnz, dtype=np.float32), (cx.row, cx.col)), shape=(N, N)
+        )
+    adj = sp.csr_array(adj_coo.tocsr())
 
     # ------------------------------------------------------------------ #
-    # 8. Encode labels                                                     #
+    # 8. Encode labels
     # ------------------------------------------------------------------ #
     le = LabelEncoder()
-    y_int = le.fit_transform(adata.obs["cell_ontology_class"].values)
-    y = torch.tensor(y_int, dtype=torch.long)
+    labels = le.fit_transform(adata.obs[label_key].values).astype(np.int64)
+    nClusters = len(le.classes_)
 
-    # ------------------------------------------------------------------ #
-    # 9. Assemble PyG Data object                                          #
-    # ------------------------------------------------------------------ #
-    n_clusters = len(le.classes_)
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
-    data.label_encoder = le
-    data.num_classes   = len(le.classes_)
-
-    # ------------------------------------------------------------------ #
-    # 10. Build dense adjacency matrix                                     #
-    # ------------------------------------------------------------------ #
-    adj = torch.sparse_coo_tensor(edge_index, torch.ones(edge_index.shape[1]), size=(N, N))
-
-
-    return adj, x, y, n_clusters  # ← FIXED: syntax error on original return
-
+    return adj, X_mat, labels, nClusters
 
 def sparse_to_tuple(sparse_mx):
     """Convert sparse matrix to tuple
