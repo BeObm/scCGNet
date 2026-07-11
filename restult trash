@@ -1,0 +1,38 @@
+Total time: 199.9268 seconds    raw seed 42
+Training results for Adam: Acc=0.44672131147540983 | ARI=0.19011850709315808, NMI=0.3129945458286381
+
+
+Total time: 201.1961 seconds    raw data / seed 82
+Training results for Adam: Acc=0.44043715846994536 | ARI=0.20561176378909735, NMI=0.29777618986367954
+
+
+Total time: 214.2678 seconds    norm_data   seed 82
+Training results for Adam: Acc=0.430327868852459 | ARI=0.23433547876433436, NMI=0.375030260142374
+100%|██████████| 350/350 [03:34<00:00,  1.63it/s]
+
+
+Total time: 210.8675 seconds  norm_data   seed 42
+Training results for Adam: Acc=0.4459016393442623 | ARI=0.2986857718400101, NMI=0.4195284593136834
+100%|██████████| 350/350 [03:30<00:00,  1.66it/s]
+
+
+
+100%|██████████| 350/350 [03:31<00:00,  1.65it/s]   norm_data  seed 1234
+Total time: 211.5047 seconds
+Training results for Adam: Acc=0.5016393442622951 | ARI=0.3149101710029721, NMI=0.44302998733050114
+
+
+Total time: 200.3504 seconds  raw data  seed 1234
+Training results for Adam: Acc=0.5183060109289618 | ARI=0.2539805832275149, NMI=0.34749121008817446
+100%|██████████| 350/350 [03:20<00:00,  1.75it/s]
+
+
+100%|██████████| 350/350 [03:11<00:00,  1.83it/s]  raw data  seed 72
+Total time: 191.3031 seconds
+Training results for Adam: Acc=0.4745901639344262 | ARI=0.22176422059191442, NMI=0.33906748222345895
+
+
+
+100%|██████████| 350/350 [03:30<00:00,  1.66it/s]   norm_data  seed 72
+Total time: 210.9094 seconds
+Training results for Adam: Acc=0.5300546448087432 | ARI=0.313417932169048, NMI=0.43971540926768926

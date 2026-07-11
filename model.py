@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
+from sklearn.cluster import KMeans
 import math
 from torch.optim import Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import StepLR
@@ -139,7 +140,7 @@ class GMCM_VGAE(nn.Module):
             ridge = ridge_lambda * torch.square(pi)
             result += ridge
         result = torch.mean(result)
-        #
+
         # for name, t in [("t1", t1), ("t2", t2), ("nb_final", nb_final),
         #                 ("zero_nb", zero_nb), ("zero_case", zero_case),
         #                 ("nb_case", nb_case), ("result", result)]:
@@ -148,7 +149,7 @@ class GMCM_VGAE(nn.Module):
 
         return result
 
-    def Calculate_Loss(self, features, adj, x_, adj_label, y, weight_tensor, norm, z_mu, z_sigma2_log, emb, L=1):
+    def Calculate_Loss(self, features, adj, x_, adj_label, y, weight_tensor, norm, z_mu, z_sigma2_log, emb, epoch):
         nClusters = self.nClusters
         features = features.to(device)
         x_ = x_.to(device)
@@ -168,10 +169,13 @@ class GMCM_VGAE(nn.Module):
         Loss_recons = Loss_recons * features.size(0)
 
         # Cluster GMCM loss
-        yita_c = torch.exp(
-            torch.log(pi.unsqueeze(0)) + self.gmcm_gaussian_pdfs_log(emb, nClusters, mu_c, log_sigma2_c, pi)) + det
-        yita_c = yita_c / (yita_c.sum(1).view(-1, 1))
-        y_pred = self.predict_gmcm(emb, nClusters, mu_c, log_sigma2_c, pi)
+        log_unnorm = torch.log(pi.unsqueeze(0)) + self.gmcm_gaussian_pdfs_log(emb, nClusters, mu_c, log_sigma2_c, pi)
+        max_log = torch.max(log_unnorm, dim=1, keepdim=True).values
+        yita_c = torch.exp(log_unnorm - max_log) + det
+        yita_c = yita_c / yita_c.sum(1, keepdim=True)
+
+
+        # y_pred = self.predict_gmcm(emb, nClusters, mu_c, log_sigma2_c, pi)
         for c in range(self.nClusters):
             log_sigma2c = torch.diagonal(log_sigma2_c[c, :]).to(device)
         # Clamp the log-variances themselves, right where they're produced by the network
@@ -210,6 +214,10 @@ class GMCM_VGAE(nn.Module):
 
         Loss_gmcm = KL1 - KL2
 
+        # for name, t in [("yita_c", yita_c), ("log_sigma2c_selected", log_sigma2c),
+        #                 ("KL1", KL1), ("KL2", KL2), ("Loss_gmcm", Loss_gmcm)]:
+        #     if torch.isnan(t).any() or torch.isinf(t).any():
+        #         print(f"[epoch {epoch}] NaN/Inf in {name}")
         # ZINB loss
         extra = self.decodeZINB(emb)
         m, d, p = extra
@@ -219,14 +227,20 @@ class GMCM_VGAE(nn.Module):
 
         Loss_zinb = self.ZINB_loss(features.to_dense().squeeze(0), m, d, p)
 
-        Loss_total = Loss_recons + Loss_gmcm + Loss_zinb
+        lambda_gmcm = 1  #
+        Loss_total = Loss_recons + lambda_gmcm * Loss_gmcm + Loss_zinb
+
+        print(
+            f"[epoch {epoch}] Loss_recons={Loss_recons.item():.4f}, Loss_gmcm={lambda_gmcm*Loss_gmcm.item():.4f}, Loss_zinb={Loss_zinb.item():.4f}")
         return Loss_total, Loss_recons, Loss_gmcm, Loss_zinb
 
-    def train(self, acc_list, adj_norm, features, adj_label, y, weight_tensor, norm, optimizer, epochs, lr,wd,momentum, save_path,
+    def train(self, acc_list, adj_norm, features, features_norm, adj_label, y, weight_tensor, norm, optimizer, epochs,
+              lr, wd, momentum, save_path,
               dataset, features_new):
 
         adj_norm = adj_norm.to(device)
         features = features.to(device)
+        features_norm = features_norm.to(device)
         adj_label = adj_label.to(device)
         weight_tensor = weight_tensor.to(device)
 
@@ -258,14 +272,16 @@ class GMCM_VGAE(nn.Module):
         for epoch in epoch_bar:
             opti.zero_grad()
             # Encoding
+            # z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)adj_norm
+            # z_mu, z_sigma2_log, emb = self.encode(features_norm, adj_norm)
             z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)
-
-            # if torch.isnan(emb).any() or torch.isinf(emb).any():
+            # if torch.isnan(emb).any() or torch.isinf(emb).any(): # Good modif
             #     print(f"[epoch {epoch}] NaN/Inf in emb — logstd min/max: "
             #           f"{self.logstd.min().item()}/{self.logstd.max().item()}")
 
             # Decoding
             x_ = self.decode(emb).to(device)
+            # print(f"[epoch {epoch}] x_ min/max: {x_.min().item()}/{x_.max().item()}") #Good modif
             # Use GMCM to model the clusters
             _, dim = emb.detach().cpu().numpy().shape
             z_mu = z_mu.to(device)
@@ -273,22 +289,58 @@ class GMCM_VGAE(nn.Module):
             emb = emb.to(device)
             # print(f"Epoch {epoch}  | emb min/max: {emb.min().item()}/{emb.max().item()} | emb has NaN: {torch.isnan(emb).any().item()}")
             gmcm = GaussianMixtureCopula(n_clusters=self.nClusters, ndim=dim)
-            gmcm_fit = gmcm.fit(emb.detach().cpu().numpy(), method='kmeans', criteria='GMCM', eps=0.0001)
-            pies = torch.from_numpy(gmcm_fit.params.prob)
-            mus = torch.from_numpy(gmcm_fit.params.means)
-            log_sigma2s = torch.from_numpy(np.log(gmcm_fit.params.covs))
-            # emb = torch.from_numpy(emb.detach().cpu().numpy())
-            emb = emb.to(device)
-            n_clusters = gmcm_fit.clusters
+
+            try:
+                gmcm_fit = gmcm.fit(emb.detach().cpu().numpy(), method='kmeans', criteria='GMCM', eps=0.0001)
+                # print(f"[epoch {epoch}] requesting nClusters={self.nClusters}")#Good modif
+
+                pies = torch.from_numpy(gmcm_fit.params.prob)
+                mus = torch.from_numpy(gmcm_fit.params.means)
+                covs_safe = np.clip(gmcm_fit.params.covs, a_min=1e-6, a_max=None)
+                log_sigma2s = torch.from_numpy(np.log(covs_safe))
+                n_clusters = gmcm_fit.clusters
+
+                self.pi.data = pies
+                self.mu_c.data = mus
+                self.log_sigma2_c.data = log_sigma2s
+                self.nClusters = n_clusters
+            except ValueError as e:
+                pass
+                # print(f"[epoch {epoch}] GMCM refit failed ({e}); reusing previous pi/mu_c/log_sigma2_c")
+                #
+                # try:
+                #     km_debug = KMeans(n_clusters=self.nClusters, n_init=10, random_state=0).fit(
+                #         emb.detach().cpu().numpy())
+                #     sizes = dict(zip(*np.unique(km_debug.labels_, return_counts=True)))
+                #     print(f"[epoch {epoch}] diagnostic cluster sizes: {sizes}")
+                # except Exception as e2:
+                #     print(f"[epoch {epoch}] diagnostic KMeans also failed: {e2}")
+
+
+            # gmcm_fit = gmcm.fit(emb.detach().cpu().numpy(), method='kmeans', criteria='GMCM', eps=0.0001)
+            # pies = torch.from_numpy(gmcm_fit.params.prob)
+            # mus = torch.from_numpy(gmcm_fit.params.means)
+            # covs_safe = np.clip(gmcm_fit.params.covs, a_min=1e-6, a_max=None)
+            # log_sigma2s = torch.from_numpy(np.log(covs_safe))            # emb = torch.from_numpy(emb.detach().cpu().numpy())
+            # emb = emb.to(device)
+            # n_clusters = gmcm_fit.clusters
+
+
+
             self.pi.data = pies
             self.mu_c.data = mus
             self.log_sigma2_c.data = log_sigma2s
+            # print(#Good modif
+            #     f"[epoch {epoch}] log_sigma2_c min/max: {self.log_sigma2_c.min().item()}/{self.log_sigma2_c.max().item()}")
+            # print(
+            #     f"[epoch {epoch}] log_sigma2_c has NaN/Inf: {torch.isnan(self.log_sigma2_c).any().item()}/{torch.isinf(self.log_sigma2_c).any().item()}")
+            # print(f"[epoch {epoch}] mu_c min/max: {self.mu_c.min().item()}/{self.mu_c.max().item()}")
             self.nClusters = n_clusters
 
             Loss_total, Loss_recons, Loss_gmcm, Loss_zinb = self.Calculate_Loss(features, adj_norm, x_,
                                                                                 adj_label.to_dense().view(-1), y,
                                                                                 weight_tensor, norm, z_mu, z_sigma2_log,
-                                                                                emb)
+                                                                                emb, epoch)
             epoch_bar.write('Loss={:.4f}'.format(Loss_total.detach().cpu().numpy()))
 
             # Prediction and metrics
@@ -372,14 +424,12 @@ class GMCM_VGAE(nn.Module):
 
     def decodeZINB(self, z):
         lin_out = self.Mean[0](z)  # Linear, before MeanAct
-        # print(f"[Mean] pre-activation min/max: {lin_out.min().item()}/{lin_out.max().item()}")
         lin_out.retain_grad()
         self._debug_mean_linear = lin_out
         m = self.Mean[1](lin_out)  # MeanAct
 
         d = self.Dispersion(z)
         p = self.Dropout(z)
-        # print(f"[ZINB] pi(dropout) min/max: {p.min().item()}/{p.max().item()}")
         p.retain_grad()
         extra = (m, d, p)
         return extra
