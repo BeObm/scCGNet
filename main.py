@@ -26,23 +26,38 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
-    parser.add_argument("--dataset_name", type=str, default="Adam")
+    parser.add_argument("--dataset_name", type=str, default="Zeisel")
     args = parser.parse_args()
 
-    result=defaultdict(list)
+
     datasets=[args.dataset_name]
-    epochs_clusters = [100,350,800]
+    epochs_clusters = [350,800]
     lr_clusters = [0.0001,0.01,0.001,0.005]
-    embedding_sizes = [40,45,64,128,256]
-    num_neuronss = [80,90,256,512]
-    seeds=[123,8]
-    opimizers=["Adam"]
+    embedding_sizes = [32,40,45,64,128,256,512]
+    num_neuronss = [64,80,90,256,512]
+    seed=82
+    optimizers=["Adam"]
     neighborss=[5,15]
     for i, dataset in enumerate(datasets):
-        for seed in seeds:
-          for epochs_cluster in epochs_clusters:
-             for n_neighbors in neighborss:
-              for optimizer in opimizers:
+        for j,n_neighbors in enumerate(neighborss):
+            # ------------------------------------------------------------------ #
+            # Load data                                                            #
+            # ------------------------------------------------------------------ #
+          n_top_genes = 2000
+          if dataset in ["baron3", "baron4", "baron5"]:
+                datapath = f"./data/{dataset}"
+          else:
+                datapath = f"./data"
+          adj, features, labels, nClusters = load_data(
+            dataset=dataset,
+            data_path=datapath,
+            n_top_genes=n_top_genes,
+            n_neighbors=n_neighbors)
+
+          for kk,epochs_cluster in enumerate(epochs_clusters):
+            result = defaultdict(list)
+            for n_neighbors in neighborss:
+              for optimizer in optimizers:
                 for lr_cluster in lr_clusters:
                     for num_neurons in num_neuronss:
                       for embedding_size in embedding_sizes:
@@ -52,30 +67,16 @@ if __name__ == "__main__":
                             # embedding_size = 128
                             # num_neurons = 512
                             activation = "Sigmoid"
-                            wd = 0.01
+                            wd = 0.0001
                             momentum = 0.9
                             min_clamp_mean = 1e-5
                             max_clamp_mean = 1e6
                             min_clamp_dis = 1e-4
                             max_clamp_dis = 1e4
-                            n_top_genes = 1200
-                            n_neighbors = 5
                             device = get_device()
                             print(torch.cuda.is_available())
 
-                            # ------------------------------------------------------------------ #
-                            # Load data                                                            #
-                            # ------------------------------------------------------------------ #
-                            if dataset in ["baron3", "baron4", "baron5"]:
-                                datapath=f"./data/{dataset}"
-                            else:
-                                datapath=f"./data"
-                            adj, features, labels, nClusters = load_data(
-                                dataset=dataset,
-                                data_path=datapath,
-                                n_top_genes=n_top_genes,
-                                n_neighbors=n_neighbors
-                            )
+
 
                             # ------------------------------------------------------------------ #
                             # Helper: convert adj tensor → scipy sparse csr                       #
@@ -215,4 +216,24 @@ if __name__ == "__main__":
                           except Exception as e:
                              pass
 
-        pd.DataFrame(result).to_csv(f"./results/Result{dataset}_{i}.csv")
+        try:
+                df = pd.DataFrame(result)
+
+                # Remove duplicate configurations (keep the first occurrence)
+                df = df.drop_duplicates()
+
+                # Best 2 for each metric
+                best_acc = df.nlargest(2, "ACC")
+                best_ari = df.nlargest(2, "ARI")
+                best_nmi = df.nlargest(2, "NMI")
+
+                # Combine and remove duplicates (if a configuration is top-2 in multiple metrics)
+                best_results = (
+                    pd.concat([best_acc, best_ari, best_nmi])
+                    .drop_duplicates()
+                    .reset_index(drop=True)
+                )
+
+                best_results.to_csv(f"./results/Result{dataset}_{i}_{j}{kk}.csv", index=False)
+        except:
+                pass
