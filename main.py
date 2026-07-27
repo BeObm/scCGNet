@@ -12,228 +12,528 @@ from collections import defaultdict
 import scipy.sparse as sp
 import pandas as pd
 from model import GMCM_VGAE
-from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_device
+from preprocessing import load_data, sparse_to_tuple, preprocess_graph, get_device
 import time
 
 save_path = "./results/"
-# datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
-#datasetse = ["Adam","baron3","baron4","baron3","Muraro","Campbell","Quake_Smart-seq2_Diaphragm","Quake_10x_Limb_Muscle_raw","Shekar","Tosches_turtle","Wang_Large_Intestine","Young"]
 
+
+# ------------------------------------------------------------------ #
+# Resumability helpers                                                 #
+# ------------------------------------------------------------------ #
+# A configuration is uniquely identified by the grid variables that vary.
+# Everything is str()'d so keys built in memory match keys read back from CSV
+# (avoids float-formatting mismatches on things like LR=0.0001).
+_KEY_COLS = ["dataset", "n_neighbors", "Epoch", "optimizer", "LR",
+             "num_neurons", "embedding_size", "seed"]
+
+
+def _config_key(dataset, n_neighbors, epochs_cluster, optimizer,
+                lr_cluster, num_neurons, embedding_size, seed):
+    return (str(dataset), str(n_neighbors), str(epochs_cluster), str(optimizer),
+            str(lr_cluster), str(num_neurons), str(embedding_size), str(seed))
+
+
+def load_completed_keys(csv_path):
+    """Read the persisted results CSV (if any) and return the set of
+    configs that already finished, so we can skip them on restart."""
+    if not os.path.exists(csv_path):
+        return set()
+    try:
+        prev = pd.read_csv(csv_path)
+    except Exception:
+        return set()
+    done = set()
+    for _, r in prev.iterrows():
+        done.add(tuple(str(r[c]) for c in _KEY_COLS))
+    return done
+
+
+def append_result_row(csv_path, row):
+    """Append one config's result to the CSV immediately (write header only
+    if the file doesn't exist yet). This is what makes the run durable."""
+    header = not os.path.exists(csv_path)
+    pd.DataFrame([row]).to_csv(csv_path, mode="a", header=header, index=False)
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
-        description=" scRNA-seq clustering with GMCM-VGAE")
-
+        description="scRNA-seq clustering with GMCM-VGAE")
     parser.add_argument("--dataset_name", type=str, default="Zeisel")
     args = parser.parse_args()
 
+    # ------------------------------------------------------------------ #
+    # Persist results to Google Drive so the 24h Colab session cap does    #
+    # not wipe the whole grid search. On a fresh runtime, re-running this   #
+    # cell reloads finished configs and resumes from where it stopped.     #
+    # (Falls back to save_path when not on Colab.)                          #
+    # ------------------------------------------------------------------ #
+    try:
+        from google.colab import drive
+        drive.mount("/content/drive")
+        results_dir = "/content/drive/MyDrive/gmcm_vgae_results"
+    except Exception:
+        results_dir = save_path
+    os.makedirs(results_dir, exist_ok=True)
 
-    datasets=[args.dataset_name]
-    epochs_clusters = [350,800]
-    lr_clusters = [0.0001,0.01,0.001,0.005]
-    embedding_sizes = [32,40,45,64,128,256,512]
-    num_neuronss = [64,80,90,256,512]
-    seed=82
-    optimizers=["Adam"]
-    neighborss=[5,15]
+    results_csv = os.path.join(results_dir, f"grid_results_{args.dataset_name}.csv")
+    completed_keys = load_completed_keys(results_csv)
+    print(f"Resuming: {len(completed_keys)} configs already completed for "
+          f"{args.dataset_name}.")
+
+    datasets = [args.dataset_name]
+    epochs_clusters = [350, 800]
+    lr_clusters = [0.0001, 0.01, 0.001, 0.005]
+    embedding_sizes = [32, 40, 45, 64, 128, 256, 512]
+    num_neuronss = [64, 80, 90, 128, 256, 512]
+    seed = 82
+    optimizers = ["Adam"]
+    neighborss = [5]
+
     for i, dataset in enumerate(datasets):
-        for j,n_neighbors in enumerate(neighborss):
-            # ------------------------------------------------------------------ #
-            # Load data                                                            #
-            # ------------------------------------------------------------------ #
-          n_top_genes = 2000
-          if dataset in ["baron3", "baron4", "baron5"]:
+        for j, n_neighbors in enumerate(neighborss):
+            # -------------------------------------------------------------- #
+            # Load data (once per dataset / n_neighbors)                       #
+            # -------------------------------------------------------------- #
+            n_top_genes = 1200
+            if dataset in ["baron3", "baron4"]:
                 datapath = f"./data/{dataset}"
-          else:
+            else:
                 datapath = f"./data"
-          adj, features, labels, nClusters = load_data(
-            dataset=dataset,
-            data_path=datapath,
-            n_top_genes=n_top_genes,
-            n_neighbors=n_neighbors)
+            adj, features, labels, nClusters = load_data(
+                dataset=dataset,
+                data_path=datapath,
+                n_top_genes=n_top_genes,
+                n_neighbors=n_neighbors)
+            features_original = features
 
-          for kk,epochs_cluster in enumerate(epochs_clusters):
-            result = defaultdict(list)
-            for n_neighbors in neighborss:
-              for optimizer in optimizers:
-                for lr_cluster in lr_clusters:
-                    for num_neurons in num_neuronss:
-                      for embedding_size in embedding_sizes:
-                          print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
-                          try:
-                            # Network hyperparameters
-                            # embedding_size = 128
-                            # num_neurons = 512
-                            activation = "Sigmoid"
-                            wd = 0.0001
-                            momentum = 0.9
-                            min_clamp_mean = 1e-5
-                            max_clamp_mean = 1e6
-                            min_clamp_dis = 1e-4
-                            max_clamp_dis = 1e4
-                            device = get_device()
-                            print(torch.cuda.is_available())
+            for kk, epochs_cluster in enumerate(epochs_clusters):
+                for n_neighbors in neighborss:
+                    for optimizer in optimizers:
+                        for lr_cluster in lr_clusters:
+                            for num_neurons in num_neuronss:
+                                for embedding_size in embedding_sizes:
+
+                                    # -------- resume check: skip finished configs --------
+                                    key = _config_key(
+                                        dataset, n_neighbors, epochs_cluster,
+                                        optimizer, lr_cluster, num_neurons,
+                                        embedding_size, seed)
+                                    if key in completed_keys:
+                                        print(f"skip (already done): {key}")
+                                        continue
+
+                                    print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
+                                    try:
+                                        # Network hyperparameters
+                                        activation = "Sigmoid"
+                                        wd = 0.0001
+                                        momentum = 0.9
+                                        min_clamp_mean = 1e-5
+                                        max_clamp_mean = 1e6
+                                        min_clamp_dis = 1e-4
+                                        max_clamp_dis = 1e4
+                                        device = get_device()
+                                        print(torch.cuda.is_available())
+
+                                        # ---- Helper: adj tensor -> scipy sparse csr ----
+                                        def tensor_to_scipy_sparse(t: torch.Tensor) -> sp.csr_matrix:
+                                            return sp.csr_matrix(t)
+
+                                        # ---- Preprocess features ----
+                                        features_new = features_original.astype(np.float32)
+
+                                        # Log-normalized copy for encoder input only. ZINB
+                                        # target (features_new) stays raw and untouched.
+                                        features_norm = sp.csr_matrix(features_new, copy=True).astype(np.float32)
+                                        row_sums = np.asarray(features_norm.sum(axis=1)).flatten()
+                                        row_sums[row_sums == 0] = 1.0  # avoid divide-by-zero
+                                        size_factors = row_sums / np.median(row_sums)
+                                        inv_size_factors = sp.diags(1.0 / size_factors)
+                                        features_norm = inv_size_factors @ features_norm
+                                        features_norm.data = np.log1p(features_norm.data)
+                                        features_norm = features_norm.astype(np.float32)
+
+                                        num_nodes = features.shape[0]
+                                        num_features = features.shape[1]
+
+                                        # ---- Preprocess adjacency ----
+                                        adj_sp = tensor_to_scipy_sparse(adj)
+                                        adj_sp = adj_sp - sp.dia_matrix(
+                                            (adj_sp.diagonal()[np.newaxis, :], [0]), shape=adj_sp.shape
+                                        )
+                                        adj_sp.eliminate_zeros()
+
+                                        pos_weight_orig = float(adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) / adj_sp.nnz
+                                        norm = adj_sp.shape[0] * adj_sp.shape[0] / float((adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) * 2)
+
+                                        adj_norm = preprocess_graph(adj_sp)
+
+                                        adj_label = adj_sp + sp.eye(adj_sp.shape[0])
+                                        adj_label = sparse_to_tuple(adj_label)
+                                        features = sparse_to_tuple(sp.csr_matrix(features_new))
+                                        num_features = features[2][1]
+
+                                        # ---- Convert to sparse tensors ----
+                                        def to_sparse_tensor(data):
+                                            indices = torch.LongTensor(data[0].T).to(device)
+                                            values = torch.FloatTensor(data[1]).to(device)
+                                            shape = torch.Size(data[2])
+                                            return torch.sparse.FloatTensor(indices, values, shape).to(device)
+
+                                        adj_norm = to_sparse_tensor(adj_norm)
+                                        adj_label = to_sparse_tensor(adj_label)
+                                        features = to_sparse_tensor(features)
+
+                                        features_norm_tuple = sparse_to_tuple(sp.csr_matrix(features_norm))
+                                        features_norm = to_sparse_tensor(features_norm_tuple)
+
+                                        print("features_norm has NaN:", torch.isnan(features_norm.to_dense()).any().item())
+                                        print("features_norm has Inf:", torch.isinf(features_norm.to_dense()).any().item())
+
+                                        weight_mask_orig = adj_label.to_dense().view(-1) == 1
+                                        weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
+                                        weight_tensor_orig[weight_mask_orig] = pos_weight_orig
+
+                                        print("features has NaN:", torch.isnan(features.to_dense()).any().item())
+                                        print("features has Inf:", torch.isinf(features.to_dense()).any().item())
+                                        print("adj_norm has NaN:", torch.isnan(adj_norm.to_dense()).any().item())
+                                        print("adj_norm has Inf:", torch.isinf(adj_norm.to_dense()).any().item())
+
+                                        # ---- Train ----
+                                        print("start")
+                                        start = time.perf_counter()
+
+                                        network = GMCM_VGAE(
+                                            adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
+                                            embedding_size=embedding_size, nClusters=nClusters, activation=activation,
+                                            seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
+                                            min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
+                                        )
+                                        network.to(device)
+
+                                        res, y_pred, y = network.train(
+                                            [], adj_norm, features, features_norm, adj_label, labels, weight_tensor_orig,
+                                            norm, optimizer=optimizer, epochs=epochs_cluster, lr=lr_cluster,
+                                            wd=wd, momentum=momentum, save_path=save_path, dataset=dataset,
+                                            features_new=features_new
+                                        )
+                                        end = time.perf_counter()
+
+                                        # -------- durably record this config BEFORE moving on --------
+                                        row = {
+                                            "dataset": dataset,
+                                            "ACC": res[0], "ARI": res[1], "NMI": res[2],
+                                            "Epoch": epochs_cluster, "LR": lr_cluster, "WD": wd,
+                                            "Momentum": momentum, "n_top_genes": n_top_genes,
+                                            "n_neighbors": n_neighbors, "num_features": num_features,
+                                            "num_neurons": num_neurons, "embedding_size": embedding_size,
+                                            "activation": activation, "optimizer": optimizer, "seed": seed,
+                                            "min_clamp_dis": min_clamp_dis, "max_clamp_dis": max_clamp_dis,
+                                            "min_clamp_mean": min_clamp_mean, "max_clamp_mean": max_clamp_mean,
+                                            "nClusters": nClusters, "device": str(device),
+                                            "time_sec": end - start,
+                                        }
+                                        append_result_row(results_csv, row)
+                                        completed_keys.add(key)
+
+                                        print(f"Total time: {end - start:0.4f} seconds")
+                                        print(f"Training results for {dataset}: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
+                                    except Exception as e:
+                                        print(f"there is error : {e}")
+
+    # ------------------------------------------------------------------ #
+    # Summarize best configs from the FULL persisted results.             #
+    # Reads the incremental CSV (covers every epochs_cluster), unlike the  #
+    # original end-only save which kept just the last epochs_cluster.      #
+    # ------------------------------------------------------------------ #
+    try:
+        df = pd.read_csv(results_csv).drop_duplicates()
+
+        best_acc = df.nlargest(2, "ACC")
+        best_ari = df.nlargest(2, "ARI")
+        best_nmi = df.nlargest(2, "NMI")
+
+        best_results = (
+            pd.concat([best_acc, best_ari, best_nmi])
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+        best_results.to_csv(
+            os.path.join(results_dir, f"Best_{args.dataset_name}.csv"), index=False)
+        print("Wrote best-config summary.")
+    except Exception as e:
+        print(f"there is error: {e}")
 
 
 
-                            # ------------------------------------------------------------------ #
-                            # Helper: convert adj tensor → scipy sparse csr                       #
-                            # ------------------------------------------------------------------ #
-                            def tensor_to_scipy_sparse(t: torch.Tensor) -> sp.csr_matrix:
-
-                                    return sp.csr_matrix(t)
 
 
-                            # ------------------------------------------------------------------ #
-                            # Preprocess adjacency                                                 #
-                            # ------------------------------------------------------------------ #
-                            features_new = features.astype(np.float32)
-                                     # features is a tensor
-
-                            # Log-normalized copy for encoder input only. ZINB target (features_new /
-                            # features, used later) stays raw and untouched. Library-size normalize
-                            # (median-based) + log1p is a standard pattern for count-based encoder
-                            # inputs -- this is general practice, NOT yet verified for this model's
-                            # ARI/NMI. sp.csr_matrix(..., copy=True) mirrors the same safe wrapping
-                            # already used later in this file for features_new, since I don't have
-                            # grounds to assume features_new's exact underlying type here.
-                            features_norm = sp.csr_matrix(features_new, copy=True).astype(np.float32)
-                            row_sums = np.asarray(features_norm.sum(axis=1)).flatten()
-                            row_sums[row_sums == 0] = 1.0  # avoid divide-by-zero on all-zero rows
-                            size_factors = row_sums / np.median(row_sums)
-                            inv_size_factors = sp.diags(1.0 / size_factors)
-                            features_norm = inv_size_factors @ features_norm
-                            features_norm.data = np.log1p(features_norm.data)
-                            features_norm = features_norm.astype(np.float32)
-
-                            # sample = features_new[:1000]
-                            # print("All integers?", np.allclose(sample, np.round(sample)))
-                            # print("Min:", sample.min(), "Max:", sample.max())
-                            # print("Has negative values?", (sample < 0).any())
-
-                            num_nodes    = features.shape[0]
-                            num_features = features.shape[1]
-
-                            # Convert adj tensor → scipy sparse for all downstream scipy ops
-                            adj_sp = tensor_to_scipy_sparse(adj)
-
-                            # Remove self-loops
-                            adj_sp = adj_sp - sp.dia_matrix(
-                                (adj_sp.diagonal()[np.newaxis, :], [0]), shape=adj_sp.shape
-                            )
-                            adj_sp.eliminate_zeros()
-
-                            # Recompute loss weights (on scipy sparse)
-                            pos_weight_orig = float(adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) / adj_sp.nnz
-                            norm = adj_sp.shape[0] * adj_sp.shape[0] / float((adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) * 2)
-
-                            # Normalised adjacency for GCN
-                            adj_norm = preprocess_graph(adj_sp)
-
-                            # Labels and features as sparse tuples
-                            adj_label = adj_sp + sp.eye(adj_sp.shape[0])
-                            adj_label  = sparse_to_tuple(adj_label)
-                            features   = sparse_to_tuple(sp.csr_matrix(features_new))   # numpy → sparse → tuple
-                            num_features = features[2][1]
-
-                            # ------------------------------------------------------------------ #
-                            # Convert to sparse tensors                                            #
-                            # ------------------------------------------------------------------ #
-                            def to_sparse_tensor(data):
-                                indices = torch.LongTensor(data[0].T).to(device)
-                                values  = torch.FloatTensor(data[1]).to(device)
-                                shape   = torch.Size(data[2])
-                                return torch.sparse.FloatTensor(indices, values, shape).to(device)
-
-                            adj_norm  = to_sparse_tensor(adj_norm)
-                            adj_label = to_sparse_tensor(adj_label)
-                            features  = to_sparse_tensor(features)
-
-                            features_norm_tuple = sparse_to_tuple(sp.csr_matrix(features_norm))
-                            features_norm = to_sparse_tensor(features_norm_tuple)
-
-                            print("features_norm has NaN:", torch.isnan(features_norm.to_dense()).any().item())
-                            print("features_norm has Inf:", torch.isinf(features_norm.to_dense()).any().item())
-
-                            weight_mask_orig   = adj_label.to_dense().view(-1) == 1
-                            weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
-                            weight_tensor_orig[weight_mask_orig] = pos_weight_orig
-
-                            print("features has NaN:", torch.isnan(features.to_dense()).any().item())
-                            print("features has Inf:", torch.isinf(features.to_dense()).any().item())
-                            print("adj_norm has NaN:", torch.isnan(adj_norm.to_dense()).any().item())
-                            print("adj_norm has Inf:", torch.isinf(adj_norm.to_dense()).any().item())
 
 
-                            # ------------------------------------------------------------------ #
-                            # Train                                                                #
-                            # ------------------------------------------------------------------ #
-                            print("start")
-                            start = time.perf_counter()
 
-                            network = GMCM_VGAE(
-                                adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
-                                embedding_size=embedding_size, nClusters=nClusters, activation=activation,
-                                seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
-                                min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
-                            )
 
-                            network.to(device)
 
-                            res, y_pred, y = network.train(
-                                [], adj_norm, features, features_norm, adj_label, labels, weight_tensor_orig,
-                                norm, optimizer=optimizer, epochs=epochs_cluster, lr=lr_cluster,
-                                wd=wd, momentum=momentum, save_path=save_path, dataset=dataset,
-                                features_new=features_new
-                            )
-                            result[dataset].append(dataset)
-                            result["ACC"].append(res[0])
-                            result["ARI"].append(res[1])
-                            result["NMI"].append(res[2])
-                            result["Epoch"].append(epochs_cluster)
-                            result["LR"].append(lr_cluster)
-                            result["WD"].append(wd)
-                            result["Momentum"].append(momentum)
-                            result["n_top_genes"].append(n_top_genes)
-                            result["n_neighbors"].append(n_neighbors)
-                            result["num_features"].append(num_features)
-                            result["num_neurons"].append(num_neurons)
-                            result["embedding_size"].append(embedding_size)
-                            result["activation"].append(activation)
-                            result["optimizer"].append(optimizer)
-                            result["seed"].append(seed)
-                            result["min_clamp_dis"].append(min_clamp_dis)
-                            result["max_clamp_dis"].append(max_clamp_dis)
-                            result["min_clamp_mean"].append(min_clamp_mean)
-                            result["max_clamp_mean"].append(max_clamp_mean)
-                            result["nClusters"].append(nClusters)
-                            result["device"].append(device)
-                            end = time.perf_counter()
-                            print(f"Total time: {end - start:0.4f} seconds")
-                            print(f"Training results for {dataset}: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
-                          except Exception as e:
-                             pass
 
-        try:
-                df = pd.DataFrame(result)
 
-                # Remove duplicate configurations (keep the first occurrence)
-                df = df.drop_duplicates()
 
-                # Best 2 for each metric
-                best_acc = df.nlargest(2, "ACC")
-                best_ari = df.nlargest(2, "ARI")
-                best_nmi = df.nlargest(2, "NMI")
 
-                # Combine and remove duplicates (if a configuration is top-2 in multiple metrics)
-                best_results = (
-                    pd.concat([best_acc, best_ari, best_nmi])
-                    .drop_duplicates()
-                    .reset_index(drop=True)
-                )
 
-                best_results.to_csv(f"./results/Result{dataset}_{i}_{j}{kk}.csv", index=False)
-        except:
-                pass
+
+
+
+
+
+
+
+
+
+
+
+# import os
+# os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# os.environ["OMP_NUM_THREADS"] = "15"
+#
+# import warnings
+# warnings.filterwarnings("ignore")
+# import numpy as np
+# import torch
+# import argparse
+# from collections import defaultdict
+# import scipy.sparse as sp
+# import pandas as pd
+# from model import GMCM_VGAE
+# from preprocessing import load_data, sparse_to_tuple, preprocess_graph,get_device
+# import time
+#
+# save_path = "./results/"
+# # datasets = ["baron3","baron4","Klein","Chung","YAN","facs_lung","droplet_lung","10X_PMBC","lps_int2","human_kidney","Muraro","Mouse","mouse_ES","worm_neuron","Quake_10x_Bladder","Quake_Smart-seq2_Limb_Muscle","Quake_Smart-seq2_Trachea","Quake_10x_Limb_Muscle","Quake_10x_Spleen","Quake_Smart-seq2_Diaphragm","Quake_Smart-seq2_Lung","Romanov"]
+# #datasetse = ["Adam","baron3","baron4","baron3","Muraro","Campbell","Quake_Smart-seq2_Diaphragm","Quake_10x_Limb_Muscle_raw","Shekar","Tosches_turtle","Wang_Large_Intestine","Young"]
+#
+#
+#
+# if __name__ == "__main__":
+#
+#     parser = argparse.ArgumentParser(
+#         description=" scRNA-seq clustering with GMCM-VGAE")
+#
+#     parser.add_argument("--dataset_name", type=str, default="Zeisel")
+#     args = parser.parse_args()
+#
+#
+#     datasets=[args.dataset_name]
+#     epochs_clusters = [350,800]
+#     lr_clusters = [0.0001,0.01,0.001,0.005]
+#     embedding_sizes = [32,40,45,64,128,256,512]
+#     num_neuronss = [64,80,90,128,256,512]
+#     seed=82
+#     # epochs_clusters = [1]
+#     # lr_clusters = [0.0001, 0.01]
+#     # embedding_sizes = [32, 40]
+#     # num_neuronss = [64, 80, 90, 256, 512]
+#     # seed = 82
+#     optimizers=["Adam"]
+#     neighborss=[5]
+#     for i, dataset in enumerate(datasets):
+#      for j,n_neighbors in enumerate(neighborss):
+#             # ------------------------------------------------------------------ #
+#             # Load data                                                            #
+#             # ------------------------------------------------------------------ #
+#           n_top_genes = 1200
+#           if dataset in ["baron3", "baron4", "baron5"]:
+#                 datapath = f"./data/{dataset}"
+#           else:
+#                 datapath = f"./data"
+#           adj, features, labels, nClusters = load_data(
+#             dataset=dataset,
+#             data_path=datapath,
+#             n_top_genes=n_top_genes,
+#             n_neighbors=n_neighbors)
+#           features_original = features
+#
+#           for kk,epochs_cluster in enumerate(epochs_clusters):
+#             result = defaultdict(list)
+#             for n_neighbors in neighborss:
+#               for optimizer in optimizers:
+#                 for lr_cluster in lr_clusters:
+#                     for num_neurons in num_neuronss:
+#                       for embedding_size in embedding_sizes:
+#                           print(f"{'*' * 32}  {i + 1}: {dataset}   {'*' * 32} ")
+#                           try:
+#                             # Network hyperparameters
+#                             # embedding_size = 128
+#                             # num_neurons = 512
+#                             activation = "Sigmoid"
+#                             wd = 0.0001
+#                             momentum = 0.9
+#                             min_clamp_mean = 1e-5
+#                             max_clamp_mean = 1e6
+#                             min_clamp_dis = 1e-4
+#                             max_clamp_dis = 1e4
+#                             device = get_device()
+#                             print(torch.cuda.is_available())
+#
+#
+#
+#                             # ------------------------------------------------------------------ #
+#                             # Helper: convert adj tensor → scipy sparse csr                       #
+#                             # ------------------------------------------------------------------ #
+#                             def tensor_to_scipy_sparse(t: torch.Tensor) -> sp.csr_matrix:
+#
+#                                     return sp.csr_matrix(t)
+#
+#
+#                             # ------------------------------------------------------------------ #
+#                             # Preprocess adjacency                                                 #
+#                             # ------------------------------------------------------------------ #
+#                             features_new = features_original.astype(np.float32)
+#
+#                                      # features is a tensor
+#
+#                             # Log-normalized copy for encoder input only. ZINB target (features_new /
+#                             # features, used later) stays raw and untouched. Library-size normalize
+#                             # (median-based) + log1p is a standard pattern for count-based encoder
+#                             # inputs -- this is general practice, NOT yet verified for this model's
+#                             # ARI/NMI. sp.csr_matrix(..., copy=True) mirrors the same safe wrapping
+#                             # already used later in this file for features_new, since I don't have
+#                             # grounds to assume features_new's exact underlying type here.
+#                             features_norm = sp.csr_matrix(features_new, copy=True).astype(np.float32)
+#                             row_sums = np.asarray(features_norm.sum(axis=1)).flatten()
+#                             row_sums[row_sums == 0] = 1.0  # avoid divide-by-zero on all-zero rows
+#                             size_factors = row_sums / np.median(row_sums)
+#                             inv_size_factors = sp.diags(1.0 / size_factors)
+#                             features_norm = inv_size_factors @ features_norm
+#                             features_norm.data = np.log1p(features_norm.data)
+#                             features_norm = features_norm.astype(np.float32)
+#
+#                             # sample = features_new[:1000]
+#                             # print("All integers?", np.allclose(sample, np.round(sample)))
+#                             # print("Min:", sample.min(), "Max:", sample.max())
+#                             # print("Has negative values?", (sample < 0).any())
+#
+#                             num_nodes    = features.shape[0]
+#                             num_features = features.shape[1]
+#
+#                             # Convert adj tensor → scipy sparse for all downstream scipy ops
+#                             adj_sp = tensor_to_scipy_sparse(adj)
+#
+#                             # Remove self-loops
+#                             adj_sp = adj_sp - sp.dia_matrix(
+#                                 (adj_sp.diagonal()[np.newaxis, :], [0]), shape=adj_sp.shape
+#                             )
+#                             adj_sp.eliminate_zeros()
+#
+#                             # Recompute loss weights (on scipy sparse)
+#                             pos_weight_orig = float(adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) / adj_sp.nnz
+#                             norm = adj_sp.shape[0] * adj_sp.shape[0] / float((adj_sp.shape[0] * adj_sp.shape[0] - adj_sp.nnz) * 2)
+#
+#                             # Normalised adjacency for GCN
+#                             adj_norm = preprocess_graph(adj_sp)
+#
+#                             # Labels and features as sparse tuples
+#                             adj_label = adj_sp + sp.eye(adj_sp.shape[0])
+#                             adj_label  = sparse_to_tuple(adj_label)
+#                             features   = sparse_to_tuple(sp.csr_matrix(features_new))   # numpy → sparse → tuple
+#                             num_features = features[2][1]
+#
+#                             # ------------------------------------------------------------------ #
+#                             # Convert to sparse tensors                                            #
+#                             # ------------------------------------------------------------------ #
+#                             def to_sparse_tensor(data):
+#                                 indices = torch.LongTensor(data[0].T).to(device)
+#                                 values  = torch.FloatTensor(data[1]).to(device)
+#                                 shape   = torch.Size(data[2])
+#                                 return torch.sparse.FloatTensor(indices, values, shape).to(device)
+#
+#                             adj_norm  = to_sparse_tensor(adj_norm)
+#                             adj_label = to_sparse_tensor(adj_label)
+#                             features  = to_sparse_tensor(features)
+#
+#                             features_norm_tuple = sparse_to_tuple(sp.csr_matrix(features_norm))
+#                             features_norm = to_sparse_tensor(features_norm_tuple)
+#
+#                             print("features_norm has NaN:", torch.isnan(features_norm.to_dense()).any().item())
+#                             print("features_norm has Inf:", torch.isinf(features_norm.to_dense()).any().item())
+#
+#                             weight_mask_orig   = adj_label.to_dense().view(-1) == 1
+#                             weight_tensor_orig = torch.ones(weight_mask_orig.size(0))
+#                             weight_tensor_orig[weight_mask_orig] = pos_weight_orig
+#
+#                             print("features has NaN:", torch.isnan(features.to_dense()).any().item())
+#                             print("features has Inf:", torch.isinf(features.to_dense()).any().item())
+#                             print("adj_norm has NaN:", torch.isnan(adj_norm.to_dense()).any().item())
+#                             print("adj_norm has Inf:", torch.isinf(adj_norm.to_dense()).any().item())
+#
+#
+#                             # ------------------------------------------------------------------ #
+#                             # Train                                                                #
+#                             # ------------------------------------------------------------------ #
+#                             print("start")
+#                             start = time.perf_counter()
+#
+#                             network = GMCM_VGAE(
+#                                 adj=adj_norm, num_neurons=num_neurons, num_features=num_features,
+#                                 embedding_size=embedding_size, nClusters=nClusters, activation=activation,
+#                                 seed=seed, min_clamp_dis=min_clamp_dis, max_clamp_dis=max_clamp_dis,
+#                                 min_clamp_mean=min_clamp_mean, max_clamp_mean=max_clamp_mean
+#                             )
+#
+#                             network.to(device)
+#
+#                             res, y_pred, y = network.train(
+#                                 [], adj_norm, features, features_norm, adj_label, labels, weight_tensor_orig,
+#                                 norm, optimizer=optimizer, epochs=epochs_cluster, lr=lr_cluster,
+#                                 wd=wd, momentum=momentum, save_path=save_path, dataset=dataset,
+#                                 features_new=features_new
+#                             )
+#                             result[dataset].append(dataset)
+#                             result["ACC"].append(res[0])
+#                             result["ARI"].append(res[1])
+#                             result["NMI"].append(res[2])
+#                             result["Epoch"].append(epochs_cluster)
+#                             result["LR"].append(lr_cluster)
+#                             result["WD"].append(wd)
+#                             result["Momentum"].append(momentum)
+#                             result["n_top_genes"].append(n_top_genes)
+#                             result["n_neighbors"].append(n_neighbors)
+#                             result["num_features"].append(num_features)
+#                             result["num_neurons"].append(num_neurons)
+#                             result["embedding_size"].append(embedding_size)
+#                             result["activation"].append(activation)
+#                             result["optimizer"].append(optimizer)
+#                             result["seed"].append(seed)
+#                             result["min_clamp_dis"].append(min_clamp_dis)
+#                             result["max_clamp_dis"].append(max_clamp_dis)
+#                             result["min_clamp_mean"].append(min_clamp_mean)
+#                             result["max_clamp_mean"].append(max_clamp_mean)
+#                             result["nClusters"].append(nClusters)
+#                             result["device"].append(device)
+#                             end = time.perf_counter()
+#                             print(f"Total time: {end - start:0.4f} seconds")
+#                             print(f"Training results for {dataset}: Acc={res[0]} | ARI={res[1]}, NMI={res[2]}")
+#                           except Exception as e:
+#                               print(f"there is error : {e}")
+#
+#           try:
+#                 df = pd.DataFrame(result)
+#
+#                 # Remove duplicate configurations (keep the first occurrence)
+#                 df = df.drop_duplicates()
+#
+#                 # Best 2 for each metric
+#                 best_acc = df.nlargest(2, "ACC")
+#                 best_ari = df.nlargest(2, "ARI")
+#                 best_nmi = df.nlargest(2, "NMI")
+#
+#                 # Combine and remove duplicates (if a configuration is top-2 in multiple metrics)
+#                 best_results = (
+#                     pd.concat([best_acc, best_ari, best_nmi])
+#                     .drop_duplicates()
+#                     .reset_index(drop=True)
+#                 )
+#
+#                 best_results.to_csv(f"./results/Result{dataset}_{i}_{j}{kk}.csv", index=False)
+#           except Exception as e:
+#                 print(f"there is error: {e}")

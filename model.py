@@ -227,11 +227,11 @@ class GMCM_VGAE(nn.Module):
 
         Loss_zinb = self.ZINB_loss(features.to_dense().squeeze(0), m, d, p)
 
-        lambda_gmcm = 1  #
-        Loss_total = Loss_recons + lambda_gmcm * Loss_gmcm + Loss_zinb
+        lamdat = 1  #
+        Loss_total = Loss_recons +  Loss_gmcm + lamdat * Loss_zinb
 
         print(
-            f"[epoch {epoch}] Loss_recons={Loss_recons.item():.4f}, Loss_gmcm={lambda_gmcm*Loss_gmcm.item():.4f}, Loss_zinb={Loss_zinb.item():.4f}")
+            f"[epoch {epoch}] Loss_recons={Loss_recons.item():.4f}, Loss_gmcm={Loss_gmcm.item():.4f}, Loss_zinb={Loss_zinb.item():.4f}")
         return Loss_total, Loss_recons, Loss_gmcm, Loss_zinb
 
     def train(self, acc_list, adj_norm, features, features_norm, adj_label, y, weight_tensor, norm, optimizer, epochs,
@@ -257,24 +257,24 @@ class GMCM_VGAE(nn.Module):
             os.makedirs(save_path)
 
         # Logging the resluts
-        os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
-        logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
-        logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
-        logwriter.writeheader()
+        # os.makedirs(save_path + dataset + '/cluster',exist_ok=True)
+        # logfile = open(save_path + dataset + '/cluster/log.csv', 'w')
+        # logwriter = csv.DictWriter(logfile, fieldnames=['iter', 'ari', 'nmi', 'Loss_total'])
+        # logwriter.writeheader()
 
         epoch_bar = tqdm(range(epochs))
 
         print('Training......')
 
         count = 0
-        currmax = 0
+        currmax = float('-inf')
         finalist = []
         for epoch in epoch_bar:
             opti.zero_grad()
             # Encoding
             # z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)adj_norm
-            # z_mu, z_sigma2_log, emb = self.encode(features_norm, adj_norm)
-            z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)
+            z_mu, z_sigma2_log, emb = self.encode(features_norm, adj_norm)
+            # z_mu, z_sigma2_log, emb = self.encode(features, adj_norm)
             # if torch.isnan(emb).any() or torch.isinf(emb).any(): # Good modif
             #     print(f"[epoch {epoch}] NaN/Inf in emb — logstd min/max: "
             #           f"{self.logstd.min().item()}/{self.logstd.max().item()}")
@@ -355,9 +355,9 @@ class GMCM_VGAE(nn.Module):
             acc, nmi, adjscore = cm.evaluationClusterModelFromLabel()
             acc_list.append(acc)
 
-            logdict = dict(iter=epoch, ari=adjscore, nmi=nmi, Loss_total=Loss_total.detach().cpu().numpy())
-            logwriter.writerow(logdict)
-            logfile.flush()
+            # logdict = dict(iter=epoch, ari=adjscore, nmi=nmi, Loss_total=Loss_total.detach().cpu().numpy())
+            # logwriter.writerow(logdict)
+            # logfile.flush()
 
             Loss_total.backward()
 

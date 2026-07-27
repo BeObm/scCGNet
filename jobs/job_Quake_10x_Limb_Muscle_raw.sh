@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16          # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --mem=16G                   # memory per cpu-core (4G is default)
 #SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_3g.40gb:1
-#SBATCH --time=20:25:50             # total run time limit (HH:MM:SS)
+#SBATCH --time=28:55:50             # total run time limit (HH:MM:SS)
 #SBATCH --account=rrg-hup           # rrg-hup - // def-hup-ab
 #SBATCH --output=logs/Quake_10x_Limb_Muscle_raw.out      # standard output file
 #SBATCH --error=logs/Quake_10x_Limb_Muscle_raw.txt       # standard error file
