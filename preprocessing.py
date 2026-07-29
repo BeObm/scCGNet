@@ -101,7 +101,7 @@ def load_data(dataset, data_path, n_top_genes, n_neighbors):
 
         return adj, features, labels_int,14
     elif dataset in ["Adam","Bach","Baron_human","Baron_mouse","Campbell","Cao_2020_Spleen","Muraro","Quake_10x_Limb_Muscle_raw",
-                     "Quake_Smart-seq2_Diaphragm","Shekhar","Tosches_turtle","Wang_Large_Intestine","Young",]:
+                     "Quake_Smart-seq2_Diaphragm","Shekhar","Tosches_turtle","Wang_Large_Intestine","Young","zeisel_preprocessed","muraro_preprocessed"]:
 
         adj, x, y, n_clusters = build_pyg_graph(
                                            n_top_genes=n_top_genes,
