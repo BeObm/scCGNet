@@ -1,19 +1,17 @@
 import numpy as np
 import torch
-from preprocessing import *
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
-from torch_geometric.nn import GCNConv,GraphConv
-import argparse
+from torch_geometric.nn import GCNConv
+
 from vgae_model import GraphVAE
-from sklearn.preprocessing import StandardScaler
 
 
 @torch.no_grad()
 def kmeans_warmstart(model, x_input, edge_index, n_clusters, seed=0):
-    """Initialise the GMCM component means from k-means on the encoder's
-    latent means. Run this only AFTER reconstruction pretraining, so z is
-    already meaningful."""
+    """Seed the GMCM component means from k-means on the encoder's current
+    latent means. This is a one-shot initialisation (single forward pass),
+    not a training phase."""
     model.eval()
     mu, _ = model.encoder.encode(x_input, edge_index)          # deterministic
     z = mu.detach().cpu().numpy()
@@ -36,15 +34,15 @@ def evaluate(model, x_input, edge_index, labels):
 
 def train(model, x_input, edge_index, adj, x_counts, labels,
           scale_factor=1.0, n_clusters=None,
-          pretrain_epochs=200, train_epochs=300, lr=1e-3,
-          weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device="cpu"):
-    """Three-phase, full-batch training.
+          epochs=500, lr=1e-3, weights=(1.0, 1.0, 1.0, 1.0),
+          eval_every=10, device="cpu"):
+    """Single-phase, full-batch training.
 
-      1. pretrain reconstruction branches only  (adj + ZINB + KL, no clustering)
-      2. k-means warm-start of the GMCM means
-      3. joint training with all four losses
+    All four losses (adj BCE + ZINB + KL + GMCM clustering) are optimised
+    jointly from the first epoch. The GMCM means are k-means-initialised once
+    before the loop -- an initialisation, not a separate training step.
 
-    labels are used for evaluation ONLY -- the clustering itself is unsupervised.
+    labels are used for evaluation ONLY -- the clustering is unsupervised.
     """
     w_adj, w_feat, w_clus, w_kl = weights
     model = model.to(device)
@@ -55,26 +53,11 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # ---- Phase 1: reconstruction pretraining (clustering weight = 0) ----
-    for ep in range(pretrain_epochs):
-        model.train()
-        opt.zero_grad()
-        loss, parts = model.loss(x_input, edge_index, adj, x_counts, scale_factor,
-                                 w_adj=w_adj, w_feat=w_feat, w_clus=0.0, w_kl=w_kl)
-        loss.backward()
-        opt.step()
-        if ep % eval_every == 0:
-            print(f"[pretrain {ep:4d}] total={parts['total']:.4f} "
-                  f"adj={parts['adj']:.4f} feat={parts['feat']:.4f} kl={parts['kl']:.4f}")
-
-    # ---- Phase 2: k-means warm-start ----
+    # one-shot k-means init of the GMCM means (no training)
     kmeans_warmstart(model, x_input, edge_index, n_clusters)
-    ari, nmi = evaluate(model, x_input, edge_index, labels)
-    print(f"[k-means init] ARI={ari:.4f} NMI={nmi:.4f}")
 
-    # ---- Phase 3: joint training ----
     best = {"ari": -1.0, "nmi": -1.0, "epoch": -1}
-    for ep in range(train_epochs):
+    for ep in range(epochs):
         model.train()
         opt.zero_grad()
         loss, parts = model.loss(x_input, edge_index, adj, x_counts, scale_factor,
@@ -85,7 +68,8 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
             ari, nmi = evaluate(model, x_input, edge_index, labels)
             if ari > best["ari"]:
                 best = {"ari": ari, "nmi": nmi, "epoch": ep}
-            print(f"[train {ep:4d}] total={parts['total']:.4f} clus={parts['clus']:.4f} "
+            print(f"[{ep:4d}] total={parts['total']:.4f} adj={parts['adj']:.4f} "
+                  f"feat={parts['feat']:.4f} kl={parts['kl']:.4f} clus={parts['clus']:.4f} "
                   f"| ARI={ari:.4f} NMI={nmi:.4f}")
 
     print(f"[best] epoch={best['epoch']} ARI={best['ari']:.4f} NMI={best['nmi']:.4f}")
@@ -93,7 +77,6 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
@@ -126,9 +109,8 @@ if __name__ == "__main__":
     # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
     # edge_index : [2, E]
     # labels     : [N]    ground-truth (eval only)
-    counts = features[0]          # <- your raw count matrix
-    adj = data["adj"]           # <- your dense adjacency
-
+    counts = features[0]  # <- your raw count matrix
+    adj = data["adj"]  # <- your dense adjacency
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -145,9 +127,9 @@ if __name__ == "__main__":
 
     K = len(np.unique(labels))
     model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=256, latent_dim=32,
-                     n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GraphConv)
+                     n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GCNConv)
 
     train(model, x_input, edge_index_t, adj_t, x_counts, labels,
           scale_factor=size_factors, n_clusters=K,
-          pretrain_epochs=200, train_epochs=300, lr=1e-3,
-          weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+          epochs=500, lr=1e-3, weights=(1.0, 1.0, 1.0, 1.0),
+          eval_every=10, device=device)
