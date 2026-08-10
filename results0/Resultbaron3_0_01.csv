@@ -1,3 +1,0 @@
-baron3,ACC,ARI,NMI,Epoch,LR,WD,Momentum,n_top_genes,n_neighbors,num_features,num_neurons,embedding_size,activation,optimizer,seed,min_clamp_dis,max_clamp_dis,min_clamp_mean,max_clamp_mean,nClusters,device
-baron3,0.7919556171983356,0.6982638578630413,0.6687759844077623,800,0.001,0.0001,0.9,2000,5,1200,64,64,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,14,cuda
-baron3,0.7572815533980582,0.7323390159140635,0.6894196643479366,800,0.01,0.0001,0.9,2000,5,1200,512,512,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,14,cuda

@@ -1,0 +1,2 @@
+/var/spool/slurmd/job19381945/slurm_script: line 21: syntax error near unexpected token `('
+/var/spool/slurmd/job19381945/slurm_script: line 21: `  python3 /workspace/main.py --dataset_name=human_kidney(Young)'

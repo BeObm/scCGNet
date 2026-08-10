@@ -1,4 +1,0 @@
-Quake_Smart-seq2_Trachea,ACC,ARI,NMI,Epoch,LR,WD,Momentum,n_top_genes,n_neighbors,num_features,num_neurons,embedding_size,activation,optimizer,seed,min_clamp_dis,max_clamp_dis,min_clamp_mean,max_clamp_mean,nClusters,device
-Quake_Smart-seq2_Trachea,0.9422222222222222,0.8601446274087182,0.8029610531068004,800,0.005,0.0001,0.9,2000,5,2000,512,512,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda
-Quake_Smart-seq2_Trachea,0.9414814814814815,0.8617609014817725,0.7848041219581233,800,0.001,0.0001,0.9,2000,5,2000,512,40,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda
-Quake_Smart-seq2_Trachea,0.8874074074074074,0.8681735239530006,0.7849260602969911,800,0.005,0.0001,0.9,2000,5,2000,90,40,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda

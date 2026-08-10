@@ -1,4 +1,0 @@
-Quake_10x_Bladder,ACC,ARI,NMI,Epoch,LR,WD,Momentum,n_top_genes,n_neighbors,num_features,num_neurons,embedding_size,activation,optimizer,seed,min_clamp_dis,max_clamp_dis,min_clamp_mean,max_clamp_mean,nClusters,device
-Quake_10x_Bladder,0.9776,0.9855406542765577,0.9396525222987,800,0.01,0.0001,0.9,2000,5,2000,512,32,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda
-Quake_10x_Bladder,0.9744,0.9902638217735912,0.9605542671741948,800,0.01,0.0001,0.9,2000,5,2000,256,512,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda
-Quake_10x_Bladder,0.9716,0.9848101359634116,0.9497215539692877,800,0.005,0.0001,0.9,2000,5,2000,512,256,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,4,cuda

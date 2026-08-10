@@ -1,3 +1,5 @@
+from pyexpat import features
+
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -239,9 +241,9 @@ class GMCM_VGAE(nn.Module):
               dataset, features_new):
 
         adj_norm = adj_norm.to(device)
-        features = features.to(device)
-        features_norm = features_norm.to(device)
-        adj_label = adj_label.to(device)
+        features = torch.tensor(features).to(device)
+        features_norm = torch.tensor(features_norm).to(device)
+        adj_label = torch.tensor(adj_label).to(device)
         weight_tensor = weight_tensor.to(device)
 
         if optimizer == "Adam":

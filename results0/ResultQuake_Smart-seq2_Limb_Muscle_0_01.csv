@@ -1,3 +1,0 @@
-Quake_Smart-seq2_Limb_Muscle,ACC,ARI,NMI,Epoch,LR,WD,Momentum,n_top_genes,n_neighbors,num_features,num_neurons,embedding_size,activation,optimizer,seed,min_clamp_dis,max_clamp_dis,min_clamp_mean,max_clamp_mean,nClusters,device
-Quake_Smart-seq2_Limb_Muscle,0.7972477064220184,0.6693919839917624,0.6061719100832551,800,0.0001,0.0001,0.9,2000,5,2000,512,64,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,6,cuda
-Quake_Smart-seq2_Limb_Muscle,0.7954128440366972,0.7423797508002908,0.661497604016939,800,0.01,0.0001,0.9,2000,5,2000,64,128,Sigmoid,Adam,82,0.0001,10000.0,1e-05,1000000.0,6,cuda
