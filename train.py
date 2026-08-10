@@ -97,7 +97,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
-    parser.add_argument("--dataset_name", type=str, default="Adam")
+    parser.add_argument("--dataset_name", type=str, default="Romanov")
     args = parser.parse_args()
 
     seed = 8
@@ -120,7 +120,6 @@ if __name__ == "__main__":
     x_input = torch.from_numpy(features).float()
     edge_index = data["edge_index"]
 
-    size_factors = 0.05
     # ---------- wire in your numpy arrays ----------
     # counts     : [N, G] raw counts (ZINB target)
     # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
@@ -145,9 +144,9 @@ if __name__ == "__main__":
 
     K = len(np.unique(labels))
     model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=256, latent_dim=32,
-                     n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GraphConv)
+                     n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GCNConv)
 
     train(model, x_input, edge_index_t, adj_t, x_counts, labels,
           scale_factor=size_factors, n_clusters=K,
-          pretrain_epochs=200, train_epochs=300, lr=1e-3,
+          pretrain_epochs=200, train_epochs=500, lr=1e-4,
           weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
