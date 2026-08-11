@@ -7,7 +7,7 @@ from torch_geometric.nn import GCNConv,GraphConv
 import argparse
 from vgae_model import GraphVAE
 from sklearn.preprocessing import StandardScaler
-
+from collections import defaultdict
 
 @torch.no_grad()
 def kmeans_warmstart(model, x_input, edge_index, n_clusters, seed=0):
@@ -97,56 +97,74 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
-    parser.add_argument("--dataset_name", type=str, default="Romanov")
+    parser.add_argument("--dataset_name", type=str, default="Adam")
     args = parser.parse_args()
 
-    seed = 8
+    result = defaultdict(list)
+    # optimizers = ["Adam","AdamW","SGD","RMSProp"]
     optimizers = ["Adam"]
     n_eighborss = 15
     n_top_genes = 2000
+    hidden_dims = [128, 256, 512]
+    latent_dims = [32, 64, 128]
+    conv_layers = [GCNConv, GCNConv, GCNConv, GCNConv]
+    epochs_clusters = [500, 800]
+    lr_clusters = [0.001, 0.01, 0.005]
+    seed = 8
 
     datapath = f"./data/{args.dataset_name}.h5ad"
     data, adata = load_h5_data(dataPath=datapath,
                                dataset=args.dataset_name,
                                hvg=n_top_genes,
                                n_neighbors=n_eighborss,
-                               ts=[0, 0],
+                               ts=[5, 0],
                                metric='cosine')
 
-    features = np.asarray(data["features"])
-    labels = data["label"]
-    K = len(np.unique(labels))
-    n_genes = features[0].shape[1]
-    x_input = torch.from_numpy(features).float()
-    edge_index = data["edge_index"]
+    for hidden_dim in range(len(hidden_dims)):
+        for latent_dim in range(len(latent_dims)):
+            for conv_layer in range(len(conv_layers)):
+                for epochs in range(len(epochs_clusters)):
+                    for lr in range(len(lr_clusters)):
+                        for optimizer in range(len(optimizers)):
 
-    # ---------- wire in your numpy arrays ----------
-    # counts     : [N, G] raw counts (ZINB target)
-    # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
-    # edge_index : [2, E]
-    # labels     : [N]    ground-truth (eval only)
-    counts = features[0]          # <- your raw count matrix
-    adj = data["adj"]           # <- your dense adjacency
+                            features = np.asarray(data["features"])
+                            labels = data["label"]
+                            K = len(np.unique(labels))
+                            n_genes = features[0].shape[1]
+                            x_input = torch.from_numpy(features).float()
+                            edge_index = data["edge_index"]
+
+                            # ---------- wire in your numpy arrays ----------
+                            # counts     : [N, G] raw counts (ZINB target)
+                            # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
+                            # edge_index : [2, E]
+                            # labels     : [N]    ground-truth (eval only)
+                            counts = features[0]          # <- your raw count matrix
+                            adj = data["adj"]           # <- your dense adjacency
 
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+                            device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    x_counts = torch.tensor(counts, dtype=torch.float32)
-    # encoder input: log1p-normalised counts. Swap in your own normalised
-    # feature array here if you already have one.
-    x_input = torch.log1p(x_counts)
-    adj_t = torch.tensor(adj, dtype=torch.float32)
-    edge_index_t = torch.tensor(edge_index, dtype=torch.long)
+                            x_counts = torch.tensor(counts, dtype=torch.float32)
+                            # encoder input: log1p-normalised counts. Swap in your own normalised
+                            # feature array here if you already have one.
+                            x_input = torch.log1p(x_counts)
+                            adj_t = torch.tensor(adj, dtype=torch.float32)
+                            edge_index_t = torch.tensor(edge_index, dtype=torch.long)
 
-    # per-cell size factors for the ZINB mean (or pass scale_factor=1.0)
-    lib = x_counts.sum(1, keepdim=True)
-    size_factors = lib / lib.median()
+                            # per-cell size factors for the ZINB mean (or pass scale_factor=1.0)
+                            lib = x_counts.sum(1, keepdim=True)
+                            size_factors = lib / lib.median()
 
-    K = len(np.unique(labels))
-    model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=256, latent_dim=32,
-                     n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GCNConv)
+                            K = len(np.unique(labels))
+                            model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=256, latent_dim=32,
+                                             n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GCNConv)
 
-    train(model, x_input, edge_index_t, adj_t, x_counts, labels,
-          scale_factor=size_factors, n_clusters=K,
-          pretrain_epochs=200, train_epochs=500, lr=1e-4,
-          weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+                            train(model, x_input, edge_index_t, adj_t, x_counts, labels,
+                                  scale_factor=size_factors, n_clusters=K,
+                                  pretrain_epochs=200, train_epochs=500, lr=1e-4,
+                                  weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+
+    df = pd.DataFrame(result)
+    df = df.nlargest(3, ["nmi"])
+    df.to_csv(f"./results/{args.dataset_name}.csv")

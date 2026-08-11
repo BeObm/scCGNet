@@ -92,11 +92,11 @@ if __name__ == "__main__":
     optimizers = ["Adam"]
     n_eighborss = 15
     n_top_genes = 2000
-    hidden_dims=[256,256,256,256]
-    latent_dims=[32,32,32,32]
+    hidden_dims=[128,256,512]
+    latent_dims=[32,64,128]
     conv_layers=[GCNConv,GCNConv,GCNConv,GCNConv]
-    epochs_clusters = [800,800,800,800]
-    lr_clusters = [0.001,0.001,0.001,0.001]
+    epochs_clusters = [500,800]
+    lr_clusters = [0.001,0.01,0.005]
     seed=8
 
     datapath = f"./data/{args.dataset_name}.h5ad"
@@ -104,7 +104,7 @@ if __name__ == "__main__":
                                dataset=args.dataset_name,
                                hvg=n_top_genes,
                                n_neighbors=n_eighborss,
-                               ts=[0, 0],
+                               ts=[5, 0],
                                metric='cosine')
 
     for hidden_dim in range(len(hidden_dims)):
