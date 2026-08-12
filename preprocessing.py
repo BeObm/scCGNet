@@ -74,12 +74,12 @@ def load_data1(dataset, data_path, modified):
     return adj, features, labels_int
 
 def load_h5_data(dataPath, dataset, hvg, n_neighbors=15, ts=None, metric='cosine'):
-    adata = ad.read(dataPath)
+    adata = ad.read_h5ad(dataPath)
     scanpy.pp.filter_cells(adata, min_genes=1)
     scanpy.pp.filter_genes(adata, min_cells=1)
     adata.raw = adata
     adata.X = adata.X.astype(np.float32)
-    scanpy.pp.normalize_per_cell(adata, counts_per_cell_after=1e4)
+    scanpy.pp.normalize_total(adata)
     adata.obs['size_factors'] = adata.obs.n_counts / np.median(adata.obs.n_counts)
     scanpy.pp.log1p(adata)
     scanpy.pp.highly_variable_genes(adata, n_top_genes=hvg)
