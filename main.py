@@ -1,13 +1,16 @@
 import numpy as np
 import torch
+from fontTools.ttLib.tables.S_V_G_ import doc_index_entry_format_0
+
 from preprocessing import *
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
-from torch_geometric.nn import GCNConv,GraphConv,LEConv,SAGEConv
+from torch_geometric.nn import GCNConv, GraphConv, LEConv, SAGEConv
 import argparse
 from vgae_model import GraphVAE
 from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
+
 
 @torch.no_grad()
 def kmeans_warmstart(model, x_input, edge_index, n_clusters, seed=0):
@@ -15,7 +18,7 @@ def kmeans_warmstart(model, x_input, edge_index, n_clusters, seed=0):
     latent means. Run this only AFTER reconstruction pretraining, so z is
     already meaningful."""
     model.eval()
-    mu, _ = model.encoder.encode(x_input, edge_index)          # deterministic
+    mu, _ = model.encoder.encode(x_input, edge_index)  # deterministic
     z = mu.detach().cpu().numpy()
     km = KMeans(n_clusters=n_clusters, n_init=20, random_state=seed).fit(z)
     centers = torch.tensor(km.cluster_centers_, dtype=torch.float32, device=mu.device)
@@ -76,6 +79,7 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
     best = {"ari": -1.0, "nmi": -1.0, "epoch": -1}
     for ep in range(train_epochs):
         model.train()
+
         opt.zero_grad()
         loss, parts = model.loss(x_input, edge_index, adj, x_counts, scale_factor,
                                  w_adj=w_adj, w_feat=w_feat, w_clus=w_clus, w_kl=w_kl)
@@ -93,11 +97,11 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
 
 if __name__ == "__main__":
-
+    os.makedirs("./results", exist_ok=True)
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
-    parser.add_argument("--dataset_name", type=str, default="Adam")
+    parser.add_argument("--dataset_name", type=str, default="Quake_10x_Limb_Muscle")
     args = parser.parse_args()
 
     result = defaultdict(list)
@@ -105,11 +109,12 @@ if __name__ == "__main__":
     optimizers = ["Adam"]
     n_eighborss = 15
     n_top_genes = 2000
-    hidden_dims = [128, 256, 512]
-    latent_dims = [32, 64, 128,512]
+    hidden_dims = [64,128, 256, 512]
+    latent_dims = [32, 64, 128, 512]
     conv_layers = [GCNConv,GraphConv,LEConv,SAGEConv]
-    epochs_clusters = [500, 800]
-    lr_clusters = [0.001, 0.01, 0.005]
+    epochs_clusters = [500,800,300]
+    pre_epochs=[200,500]
+    lr_clusters = [0.001, 0.01, 0.005, 0.0001]
     seed = 82
 
     datapath = f"./data/{args.dataset_name}.h5ad"
@@ -120,13 +125,14 @@ if __name__ == "__main__":
                                ts=[0, 0],
                                metric='cosine')
 
-    for hidden_dim in range(len(hidden_dims)):
-        for latent_dim in range(len(latent_dims)):
-            for conv_layer in range(len(conv_layers)):
-                for epochs in range(len(epochs_clusters)):
-                    for lr in range(len(lr_clusters)):
-                        for optimizer in range(len(optimizers)):
-
+    for hidden_dim in hidden_dims:
+        for latent_dim in latent_dims:
+            for conv_layer in conv_layers:
+                 for epochs in epochs_clusters:
+                  for pre_epoch in pre_epochs:
+                    for lr in lr_clusters:
+                        for optimizer in optimizers:
+                          try:
                             features = np.asarray(data["features"])
                             labels = data["label"]
                             K = len(np.unique(labels))
@@ -139,9 +145,8 @@ if __name__ == "__main__":
                             # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
                             # edge_index : [2, E]
                             # labels     : [N]    ground-truth (eval only)
-                            counts = features[0]          # <- your raw count matrix
-                            adj = data["adj"]           # <- your dense adjacency
-
+                            counts = features[0]  # <- your raw count matrix
+                            adj = data["adj"]  # <- your dense adjacency
 
                             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -157,24 +162,28 @@ if __name__ == "__main__":
                             size_factors = lib / lib.median()
 
                             K = len(np.unique(labels))
-                            model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=256, latent_dim=32,
-                                             n_genes=x_counts.shape[1], n_clusters=K, conv_layer=GCNConv)
+                            model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=hidden_dim, latent_dim=latent_dim,
+                                             n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
 
                             model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
-                                  scale_factor=size_factors, n_clusters=K,
-                                  pretrain_epochs=200, train_epochs=500, lr=1e-4,
-                                  weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
-                            
-                            result[hidden_dim].append(hidden_dim)
-                            result[latent_dim].append(latent_dim)
-                            result[conv_layer].append(conv_layer)
-                            result[epochs].append(epochs)
-                            result[lr].append(lr)
-                            result[optimizer].append(optimizer)
+                                                scale_factor=size_factors, n_clusters=K,
+                                                pretrain_epochs=pre_epoch, train_epochs=epochs, lr=lr,
+                                                weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+
+                            result["hidden_dim"].append(hidden_dim)
+                            result["latent_dim"].append(latent_dim)
+                            result["conv_layer"].append(conv_layer)
+                            result["pre_epoch"].append(pre_epoch)
+                            result["epochs"].append(epochs)
+                            result["lr"].append(lr)
+                            result["optimizer"].append(optimizer)
                             result["Best epoch"].append(best["epoch"])
                             result["ARI"].append(best["ari"])
                             result["NMI"].append(best["nmi"])
+                          except Exception as e:
+                              print(e)
+                    df0 = pd.DataFrame(result)
+                    df0.to_excel(f"./results/Details_{args.dataset_name}.xlsx", index=False)
     df = pd.DataFrame(result)
     df = df.nlargest(3, ["NMI"])
-    os.makedirs("./results", exist_ok=True)
-    df.to_csv(f"./results/{args.dataset_name}.csv")
+    df.to_excel(f"./results/{args.dataset_name}.xlsx", index=False)

@@ -75,12 +75,27 @@ def load_data1(dataset, data_path, modified):
 
 def load_h5_data(dataPath, dataset, hvg, n_neighbors=15, ts=None, metric='cosine'):
     adata = ad.read_h5ad(dataPath)
+
+
+    if "n_count" not in adata.obs.columns:
+        adata.obs['n_counts'] = np.asarray(
+            adata.X.sum(axis=1)
+        ).ravel()
+    print("obs columns:")
+
+    x = np.asarray(adata.X)
+    print("integer-valued:", np.all(x == np.floor(x)))
+    print("min:", x.min())
+    print("max:", x.max())
+    print("mean:", x.mean())
+
+    print(adata.obs.columns.tolist())
     scanpy.pp.filter_cells(adata, min_genes=1)
     scanpy.pp.filter_genes(adata, min_cells=1)
     adata.raw = adata
     adata.X = adata.X.astype(np.float32)
-    scanpy.pp.normalize_total(adata)
     adata.obs['size_factors'] = adata.obs.n_counts / np.median(adata.obs.n_counts)
+    scanpy.pp.normalize_total(adata)
     scanpy.pp.log1p(adata)
     scanpy.pp.highly_variable_genes(adata, n_top_genes=hvg)
     adata.raw.var['highly_variable'] = adata.var['highly_variable']
