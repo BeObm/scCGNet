@@ -1,0 +1,89 @@
+Bootstrap: docker
+From: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update
+    apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-dev \
+        build-essential \
+        git \
+        wget \
+        curl
+
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+    python3 -m pip install --upgrade pip setuptools wheel
+
+    # --------------------------------------------------
+    # Scientific Python
+    # --------------------------------------------------
+    python3 -m pip install \
+        numpy==1.26.4 \
+        pandas==2.2.2 \
+        scipy \
+        scikit-learn \
+        matplotlib \
+        tqdm \
+        scanpy \
+        anndata \
+        h5py \
+        pyreadr \
+        networkx \
+        seaborn \
+        POT \
+        openpyxl\
+        scikit-misc \
+        munkres
+
+    # --------------------------------------------------
+    # PyTorch CUDA 12.4
+    # --------------------------------------------------
+    #
+    # torch 2.4.1+cu124 depends on nvidia-cudnn-cu12==9.1.0.70.
+    # That exact wheel was pruned from the PyTorch cu124 mirror,
+    # but it still exists on the default PyPI index.
+    #
+    # Using --extra-index-url (not --index-url) means:
+    #   * torch/vision/audio +cu124 come from the PyTorch mirror
+    #     (the +cu124 pins only exist there),
+    #   * the cuDNN dependency is pulled from PyPI, which still has it.
+    #
+    python3 -m pip install \
+        torch==2.4.1+cu124 \
+        torchvision==0.19.1+cu124 \
+        torchaudio==2.4.1+cu124 \
+        --extra-index-url https://download.pytorch.org/whl/cu124
+
+    # --------------------------------------------------
+    # PyTorch Geometric
+    # --------------------------------------------------
+    python3 -m pip install torch-geometric
+
+    # --------------------------------------------------
+    # Other packages
+    # --------------------------------------------------
+    python3 -m pip install \
+        keras \
+        tensorflow \
+        copulae
+
+    # --------------------------------------------------
+    # Clean pip cache
+    # --------------------------------------------------
+    python3 -m pip cache purge
+
+
+%environment
+    export LC_ALL=C
+    export LANG=C
+    export PYTHONNOUSERSITE=1
+    export PATH=/usr/local/bin:$PATH
+
+
+%runscript
+    exec python3 "$@"

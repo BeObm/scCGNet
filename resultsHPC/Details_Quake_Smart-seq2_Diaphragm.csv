@@ -1,0 +1,16 @@
+,hidden_dim,latent_dim,conv_layer,pre_epoch,epochs,lr,optimizer,Best epoch,ARI,NMI
+0,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,200,300,0.001,Adam,10,0.9893253887357373,0.9772884804629611
+1,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,200,300,0.005,Adam,30,0.4770096304823673,0.7283144090204207
+2,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,500,300,0.001,Adam,40,0.8975598198315559,0.8869761992000876
+3,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,500,300,0.005,Adam,30,0.4789443145834307,0.7341715455937389
+4,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,200,500,0.001,Adam,10,0.4736941573588473,0.7137220104402464
+5,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,200,500,0.005,Adam,0,0.9768795210669008,0.9439285047009741
+6,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,500,500,0.001,Adam,0,0.8752616575415783,0.8711309221213998
+7,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,500,500,0.01,Adam,0,0.26078489692519,0.42281320434037817
+8,64,32,<class 'torch_geometric.nn.conv.gcn_conv.GCNConv'>,500,500,0.005,Adam,30,0.9725398773263155,0.9445011274325503
+9,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,200,300,0.001,Adam,10,0.4735725611423301,0.7194224525494548
+10,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,200,300,0.01,Adam,10,0.42848649244425685,0.6621411498590968
+11,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,200,300,0.005,Adam,10,0.46523810486839984,0.6761713415431067
+12,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,500,300,0.001,Adam,0,0.9503659191043068,0.906214977038193
+13,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,500,300,0.01,Adam,0,0.0,0.0
+14,64,32,<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>,500,300,0.005,Adam,0,0.46339093760473027,0.5627349231035232
