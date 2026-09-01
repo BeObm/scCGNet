@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=scCGNet_romanov    # create a short name for your job
+#SBATCH --job-name=scCGNet_Shekhar     # create a short name for your job
 #SBATCH --nodes=1                   # node count
 #SBATCH --ntasks=1                  # total number of tasks across all nodes
-#SBATCH --cpus-per-task=16          # cpu-cores per task (>1 if multi-threaded tasks)
+#SBATCH --cpus-per-task=8          # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --mem=16G                   # memory per cpu-core (4G is default)
 #SBATCH --gpus-per-node=nvidia_h100_80gb_hbm3_3g.40gb:1
-#SBATCH --time=28:25:50             # total run time limit (HH:MM:SS)
+#SBATCH --time=38:25:50             # total run time limit (HH:MM:SS)
 #SBATCH --account=rrg-hup           # rrg-hup - // def-hup-ab
-#SBATCH --output=logs/Young.out      # standard output file
-#SBATCH --error=logs/Young.txt       # standard error file
+#SBATCH --output=logs/Cao_2020_Spleen.out      # standard output file
+#SBATCH --error=logs/Cao_2020_Spleen.txt       # standard error file
 
 module load apptainer
 
@@ -18,4 +18,4 @@ mkdir -p logs
 apptainer exec --nv \
   --bind $PWD:/workspace \
   /home/moctard/scratch/scrna2.sif \
-  python3 /workspace/main.py --dataset_name=Romanov
+  python3 /workspace/main.py --dataset_name=Shekhar
