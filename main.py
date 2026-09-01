@@ -10,7 +10,7 @@ import argparse
 from vgae_model import GraphVAE
 from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
-from config import config
+from config import configs
 
 @torch.no_grad()
 def kmeans_warmstart(model, x_input, edge_index, n_clusters, seed=0):
@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--dataset_name", type=str, default="Quake_10x_Limb_Muscle")
     args = parser.parse_args()
-
+    device = get_device()
     datasetnam = [
         "Adam",
         "Bach",
@@ -124,12 +124,9 @@ if __name__ == "__main__":
         "Young"]
     seeds = [111,222,333, 444, 555]
 
-    for seed in seeds:
-       for dataset in datasetnam:
+    for dataset in datasetnam:
             args.dataset_name=dataset
 
-            result = defaultdict(list)
-            # optimizers = ["Adam","AdamW","SGD","RMSProp"]
             optimizer = "Adam"
             n_eighborss = 15
             n_top_genes = 2000
@@ -140,74 +137,77 @@ if __name__ == "__main__":
                                        n_neighbors=n_eighborss,
                                        ts=[0, 0],
                                        metric='cosine')
+            for seed in seeds:
+                print(f"Seed: {seed} | dataset:{dataset}")
+                set_random_seed(seed)
+                result = defaultdict(list)
+                config = configs[args.dataset_name]
+                hidden_dim = config["hidden_dim"]
+                latent_dim = config["latent_dim"]
+                conv_layer = config["conv_layer"]
+                pre_epoch = config["pre_epoch"]
+                epochs = config["epochs_cluster"]
+                lr = config["lr_cluster"]
 
-            config = config[args.dataset_name]
-            hidden_dim = config["hidden_dim"]
-            latent_dim = config["latent_dim"]
-            conv_layer = config["conv_layer"]
-            pre_epoch = config["pre_epoch"]
-            epochs = config["epochs_cluster"]
-            lr = config["lr_cluster"]
+                features = np.asarray(data["features"])
+                labels = data["label"]
+                K = len(np.unique(labels))
+                n_genes = features[0].shape[1]
+                x_input = torch.from_numpy(features).float()
+                edge_index = data["edge_index"]
 
-            features = np.asarray(data["features"])
-            labels = data["label"]
-            K = len(np.unique(labels))
-            n_genes = features[0].shape[1]
-            x_input = torch.from_numpy(features).float()
-            edge_index = data["edge_index"]
+                # ---------- wire in your numpy arrays ----------
+                # counts     : [N, G] raw counts (ZINB target)
+                # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
+                # edge_index : [2, E]
+                # labels     : [N]    ground-truth (eval only)
+                counts = features[0]  # <- your raw count matrix
+                adj = data["adj"]  # <- your dense adjacency
 
-            # ---------- wire in your numpy arrays ----------
-            # counts     : [N, G] raw counts (ZINB target)
-            # adj        : [N, N] 0/1 dense  (convert from scipy sparse if needed)
-            # edge_index : [2, E]
-            # labels     : [N]    ground-truth (eval only)
-            counts = features[0]  # <- your raw count matrix
-            adj = data["adj"]  # <- your dense adjacency
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            x_counts = torch.tensor(counts, dtype=torch.float32)
-            # encoder input: log1p-normalised counts. Swap in your own normalised
-            # feature array here if you already have one.
-            x_input = torch.log1p(x_counts)
-            adj_t = torch.tensor(adj, dtype=torch.float32)
-            edge_index_t = torch.tensor(edge_index, dtype=torch.long)
+                x_counts = torch.tensor(counts, dtype=torch.float32)
+                # encoder input: log1p-normalised counts. Swap in your own normalised
+                # feature array here if you already have one.
+                x_input = torch.log1p(x_counts)
+                adj_t = torch.tensor(adj, dtype=torch.float32)
+                edge_index_t = torch.tensor(edge_index, dtype=torch.long)
 
-            # per-cell size factors for the ZINB mean (or pass scale_factor=1.0)
-            lib = x_counts.sum(1, keepdim=True)
-            size_factors = lib / lib.median()
+                # per-cell size factors for the ZINB mean (or pass scale_factor=1.0)
+                lib = x_counts.sum(1, keepdim=True)
+                size_factors = lib / lib.median()
 
-            K = len(np.unique(labels))
-            # model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=hidden_dim, latent_dim=latent_dim,
-            #                  n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
-            #
-            # model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
-            #                     scale_factor=size_factors, n_clusters=K,
-            #                     pretrain_epochs=pre_epoch, train_epochs=epochs, lr=lr,
-            #                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+                K = len(np.unique(labels))
+                model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=hidden_dim, latent_dim=latent_dim,
+                                 n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
 
-            model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=8, latent_dim=8,
-                             n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
+                model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
+                                    scale_factor=size_factors, n_clusters=K,
+                                    pretrain_epochs=pre_epoch, train_epochs=epochs, lr=lr,
+                                    weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
 
-            model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
-                                scale_factor=size_factors, n_clusters=K,
-                                pretrain_epochs=3, train_epochs=3, lr=lr,
-                                weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+                # model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=8, latent_dim=8,
+                #                  n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
+                #
+                # model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
+                #                     scale_factor=size_factors, n_clusters=K,
+                #                     pretrain_epochs=1, train_epochs=1, lr=lr,
+                #                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
 
-            result["hidden_dim"].append(hidden_dim)
-            result["latent_dim"].append(latent_dim)
-            result["conv_layer"].append(conv_layer)
-            result["pre_epoch"].append(pre_epoch)
-            result["epochs"].append(epochs)
-            result["lr"].append(lr)
-            result["optimizer"].append(optimizer)
-            result["Best epoch"].append(best["epoch"])
-            result["ARI"].append(best["ari"])
-            result["NMI"].append(best["nmi"])
-            result["seed"].append(seed)
+                result["hidden_dim"].append(hidden_dim)
+                result["latent_dim"].append(latent_dim)
+                result["conv_layer"].append(conv_layer)
+                result["pre_epoch"].append(pre_epoch)
+                result["epochs"].append(epochs)
+                result["lr"].append(lr)
+                result["optimizer"].append(optimizer)
+                result["Best epoch"].append(best["epoch"])
+                result["ARI"].append(best["ari"])
+                result["NMI"].append(best["nmi"])
+                result["seed"].append(seed)
 
-            with open(f"./results/{args.dataset_name}.txt", "a") as f:
-             f.write(f"\n ===================================== ")
-             f.write(str(result))
-             f.write("\n")
-             f.close()
+                with open(f"./results/{args.dataset_name}.txt", "a") as f:
+                 f.write(f"\n ===================================== ")
+                 f.write(str(result))
+                 f.write("\n")
+                 f.close()
