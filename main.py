@@ -7,6 +7,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from torch_geometric.nn import GCNConv, GraphConv, LEConv, SAGEConv
 import argparse
+from trajectory_inference import trajectory_inference
 from scipy.optimize import linear_sum_assignment
 from vgae_model import GraphVAE
 from sklearn.preprocessing import StandardScaler
@@ -35,12 +36,13 @@ def evaluate(model, x_input, edge_index, labels):
     pred = model.cluster.assign(mu).cpu().numpy()
     ari = adjusted_rand_score(labels, pred)
     nmi = normalized_mutual_info_score(labels, pred)
+
     return ari, nmi
 
 
 
 @torch.no_grad()
-def evaluate2(model, x_input, edge_index, labels):
+def evaluate2(model, x_input, edge_index, labels,output_dir="trajectory_results"):
     """ARI / NMI of GMCM hard assignments vs ground truth (labels: eval only)."""
     model.eval()
     model.to(device)
@@ -57,6 +59,8 @@ def evaluate2(model, x_input, edge_index, labels):
         out_path=f"{newdata_path}/{args.dataset_name}_labels.csv")
     dfd = pd.DataFrame(x_input.cpu(), index=cell_ids)
     dfd.to_csv(f"{newdata_path}/{args.dataset_name}_features.csv", sep='\t')
+    trajectory_inference(z=mu,predicted_labels=pred,
+    output_dir=output_dir)
 
 
 def train(model, x_input, edge_index, adj, x_counts, labels,
@@ -125,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_name", type=str, default="Quake_10x_Limb_Muscle")
     args = parser.parse_args()
     device = get_device()
-    datasetnames = [
+    datasetnamesw = [
         "Adam",
         "Bach",
         "Campbell",
@@ -210,7 +214,8 @@ if __name__ == "__main__":
                                     pretrain_epochs=pre_epoch, train_epochs=epochs, lr=lr,
                                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
 
-                evaluate2(model, x_input, edge_index_t, labels)
+                os.makedirs(f"results/{seed}/Trajectory", exist_ok=True)
+                evaluate2(model, x_input, edge_index_t, labels,output_dir=f"results/{seed}/Trajectory")
 
 
                 with open(f"results/{seed}/{args.dataset_name}.txt", "a") as f:
