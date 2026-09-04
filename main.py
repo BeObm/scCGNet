@@ -1,12 +1,13 @@
 import numpy as np
 import torch
 from fontTools.ttLib.tables.S_V_G_ import doc_index_entry_format_0
-
+from utils import *
 from preprocessing import *
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from torch_geometric.nn import GCNConv, GraphConv, LEConv, SAGEConv
 import argparse
+from scipy.optimize import linear_sum_assignment
 from vgae_model import GraphVAE
 from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
@@ -35,6 +36,27 @@ def evaluate(model, x_input, edge_index, labels):
     ari = adjusted_rand_score(labels, pred)
     nmi = normalized_mutual_info_score(labels, pred)
     return ari, nmi
+
+
+
+@torch.no_grad()
+def evaluate2(model, x_input, edge_index, labels):
+    """ARI / NMI of GMCM hard assignments vs ground truth (labels: eval only)."""
+    model.eval()
+    model.to(device)
+    x_input = x_input.to(device)
+    edge_index = edge_index.to(device)
+
+    mu, _ = model.encoder.encode(x_input, edge_index)
+    pred = model.cluster.assign(mu).cpu().numpy()
+
+    cell_ids = np.arange(len(labels))
+    newdata_path = f"results/cluster_labels/seed_{seed}"
+    os.makedirs(newdata_path, exist_ok=True)
+    run(cell_ids=cell_ids, y_true=labels, y_pred=pred, dataset_name=args.dataset_name, model_name="scGCNet",
+        out_path=f"{newdata_path}/{args.dataset_name}_labels.csv")
+    dfd = pd.DataFrame(x_input, index=cell_ids)
+    dfd.to_csv(f"{newdata_path}/{args.dataset_name}_features.csv", sep='\t')
 
 
 def train(model, x_input, edge_index, adj, x_counts, labels,
@@ -97,14 +119,14 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
 
 if __name__ == "__main__":
-    os.makedirs("./results", exist_ok=True)
+    os.makedirs("results_03_09_2026", exist_ok=True)
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
     parser.add_argument("--dataset_name", type=str, default="Quake_10x_Limb_Muscle")
     args = parser.parse_args()
     device = get_device()
-    datasetnam = [
+    datasetnames = [
         "Adam",
         "Bach",
         "Campbell",
@@ -122,9 +144,10 @@ if __name__ == "__main__":
         "Tosches_turtle",
         "Wang_Large_Intestine",
         "Young"]
-    seeds = [111,222,333, 444, 555]
+    # seeds = [111,222,333, 444, 555]
+    seeds = [111]
 
-    for dataset in datasetnam:
+    for dataset in datasetnames:
             args.dataset_name=dataset
 
             optimizer = "Adam"
@@ -186,28 +209,12 @@ if __name__ == "__main__":
                                     pretrain_epochs=pre_epoch, train_epochs=epochs, lr=lr,
                                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
 
-                # model = GraphVAE(in_dim=x_input.shape[1], hidden_dim=8, latent_dim=8,
-                #                  n_genes=x_counts.shape[1], n_clusters=K, conv_layer=conv_layer)
-                #
-                # model, best = train(model, x_input, edge_index_t, adj_t, x_counts, labels,
-                #                     scale_factor=size_factors, n_clusters=K,
-                #                     pretrain_epochs=1, train_epochs=1, lr=lr,
-                #                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
+                evaluate2(model, x_input, edge_index_t, labels)
 
-                result["hidden_dim"].append(hidden_dim)
-                result["latent_dim"].append(latent_dim)
-                result["conv_layer"].append(conv_layer)
-                result["pre_epoch"].append(pre_epoch)
-                result["epochs"].append(epochs)
-                result["lr"].append(lr)
-                result["optimizer"].append(optimizer)
-                result["Best epoch"].append(best["epoch"])
-                result["ARI"].append(best["ari"])
-                result["NMI"].append(best["nmi"])
-                result["seed"].append(seed)
 
-                with open(f"./results/{args.dataset_name}.txt", "a") as f:
+                with open(f"results_03_09_2026/{args.dataset_name}.txt", "a") as f:
                  f.write(f"\n ===================================== ")
-                 f.write(str(result))
+                 f.write("\n")
+                 f.write(f"dataset:{dataset} | Seed:{seed} | ARI: {best['ari']} | NMI: {best['nmi']} ")
                  f.write("\n")
                  f.close()

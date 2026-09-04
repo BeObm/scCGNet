@@ -97,7 +97,7 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
 
 if __name__ == "__main__":
-    os.makedirs("./results", exist_ok=True)
+    os.makedirs("results_03_09_2026", exist_ok=True)
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
@@ -183,7 +183,7 @@ if __name__ == "__main__":
                           except Exception as e:
                               print(e)
                     df0 = pd.DataFrame(result)
-                    df0.to_csv(f"./results/Details_{args.dataset_name}.csv", index=False)
+                    df0.to_csv(f"./results_03_09_2026/Details_{args.dataset_name}.csv", index=False)
     df = pd.DataFrame(result)
     df = df.nlargest(3, ["NMI"])
-    df.to_csv(f"./results/{args.dataset_name}.csv", index=False)
+    df.to_csv(f"./results_03_09_2026/{args.dataset_name}.csv", index=False)

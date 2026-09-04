@@ -21,7 +21,7 @@ configs={
     "conv_layer" :SAGEConv,
     "epochs_cluster" : 300,
     "pre_epoch":200,
-    "lr_cluster" : 0.00},
+    "lr_cluster" : 0.001},
     "Muraro":{
         "n_eighborss" : 15,
         "n_top_genes" : 2000,
