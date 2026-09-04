@@ -55,7 +55,7 @@ def evaluate2(model, x_input, edge_index, labels):
     os.makedirs(newdata_path, exist_ok=True)
     run(cell_ids=cell_ids, y_true=labels, y_pred=pred, dataset_name=args.dataset_name, model_name="scGCNet",
         out_path=f"{newdata_path}/{args.dataset_name}_labels.csv")
-    dfd = pd.DataFrame(x_input, index=cell_ids)
+    dfd = pd.DataFrame(x_input.cpu(), index=cell_ids)
     dfd.to_csv(f"{newdata_path}/{args.dataset_name}_features.csv", sep='\t')
 
 
@@ -119,7 +119,6 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
 
 if __name__ == "__main__":
-    os.makedirs("results_03_09_2026", exist_ok=True)
     parser = argparse.ArgumentParser(
         description=" scRNA-seq clustering with GMCM-VGAE")
 
@@ -161,6 +160,8 @@ if __name__ == "__main__":
                                        ts=[0, 0],
                                        metric='cosine')
             for seed in seeds:
+                os.makedirs(f"results/{seed}", exist_ok=True)
+
                 print(f"Seed: {seed} | dataset:{dataset}")
                 set_random_seed(seed)
                 result = defaultdict(list)
@@ -212,7 +213,7 @@ if __name__ == "__main__":
                 evaluate2(model, x_input, edge_index_t, labels)
 
 
-                with open(f"results_03_09_2026/{args.dataset_name}.txt", "a") as f:
+                with open(f"results/{seed}/{args.dataset_name}.txt", "a") as f:
                  f.write(f"\n ===================================== ")
                  f.write("\n")
                  f.write(f"dataset:{dataset} | Seed:{seed} | ARI: {best['ari']} | NMI: {best['nmi']} ")
