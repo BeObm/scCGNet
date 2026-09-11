@@ -14,6 +14,7 @@ from matplotlib.colors import ListedColormap
 from scipy.sparse.csc import csc_matrix
 from scipy.sparse.csr import csr_matrix
 from sklearn.neighbors import NearestNeighbors
+from scipy.optimize import linear_sum_assignment
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -372,3 +373,81 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+
+
+def align_clusters_to_truth(y_true, y_pred):
+    """
+    Map predicted cluster ids onto true label ids via the Hungarian algorithm
+    (maximising total overlap). Handles the case where the number of predicted
+    clusters differs from the number of true classes.
+
+    Returns
+    -------
+    y_pred_aligned : np.ndarray
+        Predicted labels re-expressed in the true-label space.
+    mapping : dict
+        {original_predicted_id: assigned_true_id}
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    true_classes = np.unique(y_true)
+    pred_clusters = np.unique(y_pred)
+
+    # Contingency (overlap) matrix: rows = predicted clusters, cols = true classes
+    overlap = np.zeros((len(pred_clusters), len(true_classes)), dtype=np.int64)
+    pred_index = {c: i for i, c in enumerate(pred_clusters)}
+    true_index = {c: j for j, c in enumerate(true_classes)}
+    for t, p in zip(y_true, y_pred):
+        overlap[pred_index[p], true_index[t]] += 1
+
+    # Hungarian solves a MINIMISATION, so negate to maximise overlap.
+    # linear_sum_assignment handles rectangular matrices: it matches
+    # min(n_pred, n_true) pairs optimally.
+    row_ind, col_ind = linear_sum_assignment(-overlap)
+
+    mapping = {}
+    for r, c in zip(row_ind, col_ind):
+        mapping[pred_clusters[r]] = true_classes[c]
+
+    # Fallback for any predicted cluster left unmatched (happens when there are
+    # more predicted clusters than true classes): assign it to the true class it
+    # overlaps with most, so no cell is left without a label.
+    for r, cluster in enumerate(pred_clusters):
+        if cluster not in mapping:
+            best_true = true_classes[np.argmax(overlap[r])]
+            mapping[cluster] = best_true
+
+    y_pred_aligned = np.array([mapping[p] for p in y_pred])
+    return y_pred_aligned, mapping
+
+
+def align_on_barcodes(true_df, pred_df, barcode_col, label_col):
+    """
+    Optional pre-step: if your true labels and predicted labels come from
+    pipelines that kept different cells, intersect on barcodes and return
+    two label vectors guaranteed to be over the SAME cells in the SAME order.
+
+    true_df / pred_df : DataFrames each containing a barcode column and a
+                        label column.
+    """
+    merged = true_df[[barcode_col, label_col]].merge(
+        pred_df[[barcode_col, label_col]],
+        on=barcode_col,
+        suffixes=("_true", "_pred"),
+    )
+    barcodes = merged[barcode_col].to_numpy()
+    y_true = merged[f"{label_col}_true"].to_numpy()
+    y_pred = merged[f"{label_col}_pred"].to_numpy()
+    return barcodes, y_true, y_pred
+
+
+def compute_cluster_accuracy(y_true, y_pred):
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    y_pred_aligned, mapping = align_clusters_to_truth(y_true, y_pred)
+
+    acc = float(np.mean(y_true == y_pred_aligned))
+    return acc

@@ -32,9 +32,10 @@ def evaluate(model, x_input, edge_index, labels):
     model.eval()
     mu, _ = model.encoder.encode(x_input, edge_index)
     pred = model.cluster.assign(mu).cpu().numpy()
+    acc=compute_cluster_accuracy(labels, pred)
     ari = adjusted_rand_score(labels, pred)
     nmi = normalized_mutual_info_score(labels, pred)
-    return ari, nmi
+    return ari, nmi,acc
 
 
 def train(model, x_input, edge_index, adj, x_counts, labels,
@@ -72,11 +73,11 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
 
     # ---- Phase 2: k-means warm-start ----
     kmeans_warmstart(model, x_input, edge_index, n_clusters)
-    ari, nmi = evaluate(model, x_input, edge_index, labels)
+    ari, nmi,acc = evaluate(model, x_input, edge_index, labels)
     print(f"[k-means init] ARI={ari:.4f} NMI={nmi:.4f}")
 
     # ---- Phase 3: joint training ----
-    best = {"ari": -1.0, "nmi": -1.0, "epoch": -1}
+    best = {"acc":-1,"ari": -1.0, "nmi": -1.0, "epoch": -1}
     for ep in range(train_epochs):
         model.train()
 
@@ -86,9 +87,9 @@ def train(model, x_input, edge_index, adj, x_counts, labels,
         loss.backward()
         opt.step()
         if ep % eval_every == 0:
-            ari, nmi = evaluate(model, x_input, edge_index, labels)
+            ari, nmi,acc = evaluate(model, x_input, edge_index, labels)
             if ari > best["ari"]:
-                best = {"ari": ari, "nmi": nmi, "epoch": ep}
+                best = {"acc":acc,"ari": ari, "nmi": nmi, "epoch": ep}
             print(f"[train {ep:4d}] total={parts['total']:.4f} clus={parts['clus']:.4f} "
                   f"| ARI={ari:.4f} NMI={nmi:.4f}")
 
@@ -122,7 +123,8 @@ if __name__ == "__main__":
         "Tosches_turtle",
         "Wang_Large_Intestine",
         "Young"]
-    seeds = [111,222,333, 444, 555]
+    # seeds = [111,222,333, 444, 555]
+    seeds = [333]
 
     for dataset in datasetnam:
             args.dataset_name=dataset
@@ -194,20 +196,10 @@ if __name__ == "__main__":
                 #                     pretrain_epochs=1, train_epochs=1, lr=lr,
                 #                     weights=(1.0, 1.0, 1.0, 1.0), eval_every=10, device=device)
 
-                result["hidden_dim"].append(hidden_dim)
-                result["latent_dim"].append(latent_dim)
-                result["conv_layer"].append(conv_layer)
-                result["pre_epoch"].append(pre_epoch)
-                result["epochs"].append(epochs)
-                result["lr"].append(lr)
-                result["optimizer"].append(optimizer)
-                result["Best epoch"].append(best["epoch"])
-                result["ARI"].append(best["ari"])
-                result["NMI"].append(best["nmi"])
-                result["seed"].append(seed)
 
-                with open(f"./results/{args.dataset_name}.txt", "a") as f:
-                 f.write(f"\n ===================================== ")
-                 f.write(str(result))
-                 f.write("\n")
-                 f.close()
+                with open(f"results/{args.dataset_name}.txt", "a") as f:
+                    f.write(f"===================================== ")
+                    f.write("\n")
+                    f.write(f"dataset:{dataset} | Seed:{seed} |ACC:{best['acc']} | ARI: {best['ari']} | NMI: {best['nmi']} ")
+                    f.write("\n")
+                    f.close()
