@@ -1,0 +1,23 @@
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [40], 'ARI': [0.6387110151098889], 'NMI': [0.7646288522337497], 'seed': [111]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [0], 'ARI': [0.6511638680730965], 'NMI': [0.7998737064216259], 'seed': [222]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [20], 'ARI': [0.49188213971694256], 'NMI': [0.7246914616564404], 'seed': [333]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [10], 'ARI': [0.5045014921307157], 'NMI': [0.7404925397456631], 'seed': [444]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [0], 'ARI': [0.5397339766472132], 'NMI': [0.7618886321263191], 'seed': [555]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [40], 'ARI': [0.6387110151098889], 'NMI': [0.7646288522337497], 'seed': [111]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [0], 'ARI': [0.6511638680730965], 'NMI': [0.799873706421626], 'seed': [222]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [20], 'ARI': [0.49188213971694256], 'NMI': [0.7246914616564406], 'seed': [333]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [10], 'ARI': [0.5045014921307157], 'NMI': [0.7404925397456631], 'seed': [444]})
+
+ ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [300], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [0], 'ARI': [0.5381910988005184], 'NMI': [0.761680258061901], 'seed': [555]})
+
+ ===================================== 
+dataset:Quake_Smart-seq2_Lung | Seed:111 | ARI: 0.6434157499033779 | NMI: 0.7672794645564199 
