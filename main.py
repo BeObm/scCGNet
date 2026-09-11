@@ -107,9 +107,6 @@ if __name__ == "__main__":
     device = get_device()
     datasetnam = [
         "Adam",
-        "Bach",
-        "Campbell",
-        "Cao_2020_Spleen",
         "Muraro",
         "Quake_10x_Bladder",
         "Quake_10x_Limb_Muscle",
@@ -119,10 +116,14 @@ if __name__ == "__main__":
         "Quake_Smart-seq2_Lung",
         "Quake_Smart-seq2_Trachea",
         "Romanov",
+        "Young",
         "Shekhar",
         "Tosches_turtle",
-        "Wang_Large_Intestine",
-        "Young"]
+        "Wang_Large_Intestine"
+        "Campbell",
+        "Cao_2020_Spleen",
+        "Bach"
+        ]
     # seeds = [111,222,333, 444, 555]
     seeds = [333]
 
