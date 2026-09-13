@@ -20,4 +20,4 @@
  ===================================== defaultdict(<class 'list'>, {'hidden_dim': [64], 'latent_dim': [64], 'conv_layer': [<class 'torch_geometric.nn.conv.sage_conv.SAGEConv'>], 'pre_epoch': [200], 'epochs': [500], 'lr': [0.001], 'optimizer': ['Adam'], 'Best epoch': [10], 'ARI': [0.6760999209224999], 'NMI': [0.6784606048313231], 'seed': [555]})
 
  ===================================== 
-dataset:Muraro | Seed:111 | ARI: 0.8219965397883119 | NMI: 0.8273105556652943 
+dataset:Muraro | Seed:111 | ARI: 0.8219965397883119 | NMI: 0.8273105556652943
